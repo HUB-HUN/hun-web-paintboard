@@ -60,6 +60,16 @@ const state = {
     panStartOffsetX: 0,
     panStartOffsetY: 0,
     spacePressed: false,
+    touchPoints: new Map(),
+    touchGesture: {
+      active: false,
+      startDistance: 0,
+      startScale: 1,
+      startMidClientX: 0,
+      startMidClientY: 0,
+      startOffsetX: 0,
+      startOffsetY: 0,
+    },
   },
   text: {
     family: textFontFamily.value,
@@ -162,7 +172,7 @@ function applyViewTransform() {
 
 function updateCanvasCursor() {
   let cursor = "crosshair";
-  if (state.view.panning) {
+  if (state.view.touchGesture.active || state.view.panning) {
     cursor = "grabbing";
   } else if (state.view.spacePressed) {
     cursor = "grab";
@@ -173,6 +183,17 @@ function updateCanvasCursor() {
   }
   canvas.style.cursor = cursor;
   canvasWrap.style.cursor = cursor;
+}
+
+function releasePointerCaptureSafe(pointerId) {
+  if (pointerId === null || pointerId === undefined) return;
+  try {
+    if (canvasWrap.hasPointerCapture(pointerId)) {
+      canvasWrap.releasePointerCapture(pointerId);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 function shouldStartPan(event) {
@@ -192,17 +213,84 @@ function startPan(event) {
 }
 
 function stopPan() {
-  if (state.view.panPointerId !== null) {
-    try {
-      if (canvasWrap.hasPointerCapture(state.view.panPointerId)) {
-        canvasWrap.releasePointerCapture(state.view.panPointerId);
-      }
-    } catch {
-      // ignore
-    }
-  }
+  releasePointerCaptureSafe(state.view.panPointerId);
   state.view.panning = false;
   state.view.panPointerId = null;
+  updateCanvasCursor();
+}
+
+function collectTouchPair() {
+  const points = Array.from(state.view.touchPoints.values());
+  if (points.length < 2) return null;
+  return [points[0], points[1]];
+}
+
+function calculateDistanceAndMidpoint(a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  return {
+    distance: Math.max(12, Math.hypot(dx, dy)),
+    midX: (a.x + b.x) / 2,
+    midY: (a.y + b.y) / 2,
+  };
+}
+
+function beginTouchGesture() {
+  const pair = collectTouchPair();
+  if (!pair) return;
+
+  if (state.drawing) {
+    endDraw({ pointerId: state.pointerId });
+  }
+  if (state.view.panning) {
+    stopPan();
+  }
+
+  const metrics = calculateDistanceAndMidpoint(pair[0], pair[1]);
+  state.view.touchGesture.active = true;
+  state.view.touchGesture.startDistance = metrics.distance;
+  state.view.touchGesture.startScale = state.view.scale;
+  state.view.touchGesture.startMidClientX = metrics.midX;
+  state.view.touchGesture.startMidClientY = metrics.midY;
+  state.view.touchGesture.startOffsetX = state.view.offsetX;
+  state.view.touchGesture.startOffsetY = state.view.offsetY;
+  updateCanvasCursor();
+}
+
+function updateTouchGesture() {
+  const pair = collectTouchPair();
+  if (!pair) return false;
+
+  if (!state.view.touchGesture.active) {
+    beginTouchGesture();
+  }
+  if (!state.view.touchGesture.active) return false;
+
+  const metrics = calculateDistanceAndMidpoint(pair[0], pair[1]);
+  const gesture = state.view.touchGesture;
+  const rect = canvasWrap.getBoundingClientRect();
+
+  const startAnchorX = gesture.startMidClientX - rect.left;
+  const startAnchorY = gesture.startMidClientY - rect.top;
+  const worldX = (startAnchorX - gesture.startOffsetX) / gesture.startScale;
+  const worldY = (startAnchorY - gesture.startOffsetY) / gesture.startScale;
+
+  state.view.scale = clampNumber(
+    gesture.startScale * (metrics.distance / gesture.startDistance),
+    state.view.minScale,
+    state.view.maxScale,
+  );
+
+  const currentAnchorX = metrics.midX - rect.left;
+  const currentAnchorY = metrics.midY - rect.top;
+  state.view.offsetX = currentAnchorX - worldX * state.view.scale;
+  state.view.offsetY = currentAnchorY - worldY * state.view.scale;
+  applyViewTransform();
+  return true;
+}
+
+function endTouchGesture() {
+  state.view.touchGesture.active = false;
   updateCanvasCursor();
 }
 
@@ -230,9 +318,15 @@ function resetView() {
 
 function handleWheel(event) {
   event.preventDefault();
-  const intensity = event.ctrlKey ? 0.004 : 0.0022;
-  const factor = Math.exp(-event.deltaY * intensity);
-  zoomAtClientPoint(event.clientX, event.clientY, state.view.scale * factor);
+  if (event.ctrlKey) {
+    const intensity = 0.004;
+    const factor = Math.exp(-event.deltaY * intensity);
+    zoomAtClientPoint(event.clientX, event.clientY, state.view.scale * factor);
+    return;
+  }
+  state.view.offsetX -= event.deltaX;
+  state.view.offsetY -= event.deltaY;
+  applyViewTransform();
 }
 
 function handleKeyDown(event) {
@@ -709,6 +803,20 @@ function beginSelectionFromRect(rect) {
 }
 
 function beginDraw(event) {
+  if (event.pointerType === "touch") {
+    event.preventDefault();
+    state.view.touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    try {
+      canvasWrap.setPointerCapture(event.pointerId);
+    } catch {
+      // ignore
+    }
+    if (state.view.touchPoints.size >= 2) {
+      beginTouchGesture();
+      return;
+    }
+  }
+
   if (shouldStartPan(event)) {
     event.preventDefault();
     startPan(event);
@@ -770,6 +878,15 @@ function beginDraw(event) {
 }
 
 function draw(event) {
+  if (event.pointerType === "touch" && state.view.touchPoints.has(event.pointerId)) {
+    state.view.touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (state.view.touchGesture.active || state.view.touchPoints.size >= 2) {
+      event.preventDefault();
+      updateTouchGesture();
+      return;
+    }
+  }
+
   if (state.view.panning) {
     if (event.pointerId !== state.view.panPointerId) return;
     event.preventDefault();
@@ -827,6 +944,19 @@ function draw(event) {
 }
 
 function endDraw(event) {
+  if (event && event.pointerType === "touch") {
+    state.view.touchPoints.delete(event.pointerId);
+    releasePointerCaptureSafe(event.pointerId);
+    if (state.view.touchGesture.active) {
+      if (state.view.touchPoints.size < 2) {
+        endTouchGesture();
+      }
+      if (!state.drawing) {
+        return;
+      }
+    }
+  }
+
   if (state.view.panning) {
     if (event && state.view.panPointerId !== null && event.pointerId !== state.view.panPointerId) return;
     stopPan();
@@ -862,15 +992,7 @@ function endDraw(event) {
   state.drawing = false;
   state.previewSnapshot = null;
   state.selection.creating = false;
-  if (state.pointerId !== null) {
-    try {
-      if (canvasWrap.hasPointerCapture(state.pointerId)) {
-        canvasWrap.releasePointerCapture(state.pointerId);
-      }
-    } catch {
-      // ignore
-    }
-  }
+  releasePointerCaptureSafe(state.pointerId);
   state.pointerId = null;
   ctx.globalCompositeOperation = "source-over";
 }
@@ -1167,6 +1289,10 @@ function initEvents() {
   window.addEventListener("keyup", handleKeyUp);
   window.addEventListener("blur", () => {
     state.view.spacePressed = false;
+    state.view.touchPoints.clear();
+    if (state.view.touchGesture.active) {
+      endTouchGesture();
+    }
     if (state.view.panning) {
       stopPan();
     }
