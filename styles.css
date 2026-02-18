@@ -106,13 +106,16 @@ input {
   font-size: 13px;
 }
 
-#textFontFamily,
-#textFontWeight {
+#textFontFamily {
   min-height: 30px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
   padding: 3px 8px;
+}
+
+#textFontWeight {
+  width: 128px;
 }
 
 #colorPicker {
@@ -125,13 +128,25 @@ input {
 }
 
 #sizeSlider {
-  width: 120px;
+  width: 104px;
 }
 
 #sizeValue {
   min-width: 42px;
   text-align: right;
   color: var(--muted);
+}
+
+#textWeightValue {
+  min-width: 32px;
+  text-align: right;
+  color: var(--muted);
+}
+
+.brush-size-inline {
+  border-left: 1px solid var(--border);
+  margin-left: 2px;
+  padding-left: 8px;
 }
 
 .swatches {

@@ -18,6 +18,11 @@
           <button class="tool-button active" data-tool="brush" type="button" title="브러시">
             <span class="icon" aria-hidden="true">✎</span><span>브러시</span>
           </button>
+          <label class="picker-label brush-size-inline">
+            <span>굵기</span>
+            <input id="sizeSlider" type="range" min="1" max="64" step="1" value="6" />
+            <strong id="sizeValue">6px</strong>
+          </label>
           <button class="tool-button" data-tool="line" type="button" title="직선">
             <span class="icon" aria-hidden="true">╱</span><span>직선</span>
           </button>
@@ -68,30 +73,13 @@
           </label>
           <label class="picker-label">
             <span>두께</span>
-            <select id="textFontWeight">
-              <option value="100">100</option>
-              <option value="200">200</option>
-              <option value="300">300</option>
-              <option value="400" selected>400</option>
-              <option value="500">500</option>
-              <option value="600">600</option>
-              <option value="700">700</option>
-              <option value="800">800</option>
-              <option value="900">900</option>
-            </select>
+            <input id="textFontWeight" type="range" min="1" max="900" step="1" value="400" />
+            <strong id="textWeightValue">400</strong>
           </label>
           <label class="picker-label">
             <span>텍스트 크기</span>
             <input id="textSizeSlider" type="range" min="10" max="160" value="42" />
             <strong id="textSizeValue">42px</strong>
-          </label>
-        </section>
-
-        <section class="control-group" aria-label="선 굵기 설정">
-          <label class="picker-label">
-            <span>굵기</span>
-            <input id="sizeSlider" type="range" min="1" max="64" value="6" />
-            <strong id="sizeValue">6px</strong>
           </label>
         </section>
 
@@ -105,12 +93,6 @@
         </section>
 
         <section class="action-group" aria-label="편집 액션">
-          <button id="copyButton" type="button" title="Ctrl/Cmd+C">
-            <span class="icon" aria-hidden="true">⧉</span><span>복사</span>
-          </button>
-          <button id="pasteButton" type="button" title="Ctrl/Cmd+V">
-            <span class="icon" aria-hidden="true">⎘</span><span>붙여넣기</span>
-          </button>
           <button id="undoButton" type="button" title="Ctrl/Cmd+Z">
             <span class="icon" aria-hidden="true">↶</span><span>되돌리기</span>
           </button>

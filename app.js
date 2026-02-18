@@ -8,13 +8,12 @@ const sizeValue = document.getElementById("sizeValue");
 const undoButton = document.getElementById("undoButton");
 const clearButton = document.getElementById("clearButton");
 const saveButton = document.getElementById("saveButton");
-const copyButton = document.getElementById("copyButton");
-const pasteButton = document.getElementById("pasteButton");
 const toastContainer = document.getElementById("toastContainer");
 const strokeModeButton = document.getElementById("strokeModeButton");
 const fillModeButton = document.getElementById("fillModeButton");
 const textFontFamily = document.getElementById("textFontFamily");
 const textFontWeight = document.getElementById("textFontWeight");
+const textWeightValue = document.getElementById("textWeightValue");
 const textSizeSlider = document.getElementById("textSizeSlider");
 const textSizeValue = document.getElementById("textSizeValue");
 
@@ -451,6 +450,7 @@ function setShapeFillMode(fill) {
 
 function setToolUI() {
   sizeValue.textContent = `${state.size}px`;
+  textWeightValue.textContent = `${state.text.weight}`;
   textSizeValue.textContent = `${state.text.size}px`;
   toolButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.tool === state.tool);
@@ -1038,7 +1038,7 @@ function initEvents() {
     setToolUI();
   });
 
-  textFontWeight.addEventListener("change", () => {
+  textFontWeight.addEventListener("input", () => {
     state.text.weight = Number(textFontWeight.value);
     updateEditorVisual();
     setToolUI();
@@ -1078,8 +1078,6 @@ function initEvents() {
     setShapeFillMode(true);
   });
 
-  copyButton.addEventListener("click", copyCanvasToClipboard);
-  pasteButton.addEventListener("click", pasteFromClipboardButton);
   undoButton.addEventListener("click", undo);
   clearButton.addEventListener("click", clearCanvas);
   saveButton.addEventListener("click", savePng);
