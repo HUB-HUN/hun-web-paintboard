@@ -30,6 +30,9 @@
           <button class="tool-button" data-tool="star" type="button" title="별">
             <span class="icon" aria-hidden="true">★</span><span>별</span>
           </button>
+          <button class="tool-button" data-tool="select" type="button" title="선택/이동">
+            <span class="icon" aria-hidden="true">▣</span><span>선택/이동</span>
+          </button>
           <button class="tool-button" data-tool="eraser" type="button" title="지우개">
             <span class="icon" aria-hidden="true">⌫</span><span>지우개</span>
           </button>
@@ -57,6 +60,15 @@
           </label>
         </section>
 
+        <section class="control-group" aria-label="도형 채우기 모드">
+          <button id="strokeModeButton" class="mode-button active" type="button" title="테두리 모드">
+            <span class="icon" aria-hidden="true">◌</span><span>테두리</span>
+          </button>
+          <button id="fillModeButton" class="mode-button" type="button" title="채우기 모드">
+            <span class="icon" aria-hidden="true">⬤</span><span>채우기</span>
+          </button>
+        </section>
+
         <section class="action-group" aria-label="편집 액션">
           <button id="copyButton" type="button" title="Ctrl/Cmd+C">
             <span class="icon" aria-hidden="true">⧉</span><span>복사</span>
@@ -75,7 +87,7 @@
           </button>
         </section>
 
-        <p class="shortcut-hint">단축키: Ctrl/Cmd + C 복사 · Ctrl/Cmd + V 붙여넣기 · Ctrl/Cmd + Z 되돌리기</p>
+        <p class="shortcut-hint">단축키: Ctrl/Cmd + C 복사 · Ctrl/Cmd + V 붙여넣기 · Ctrl/Cmd + Z 되돌리기 · Shift + 드래그 비율 고정</p>
         <p id="statusText" class="status" aria-live="polite"></p>
       </header>
 

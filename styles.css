@@ -66,7 +66,8 @@ input {
 }
 
 .tool-button,
-.action-group button {
+.action-group button,
+.mode-button {
   display: inline-flex;
   gap: 6px;
   align-items: center;
@@ -80,7 +81,8 @@ input {
 }
 
 .tool-button.active,
-.action-group button.active {
+.action-group button.active,
+.mode-button.active {
   color: #fff;
   background: var(--accent);
   border-color: var(--accent);

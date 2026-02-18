@@ -10,10 +10,13 @@ const saveButton = document.getElementById("saveButton");
 const copyButton = document.getElementById("copyButton");
 const pasteButton = document.getElementById("pasteButton");
 const statusText = document.getElementById("statusText");
+const strokeModeButton = document.getElementById("strokeModeButton");
+const fillModeButton = document.getElementById("fillModeButton");
 
 const toolButtons = Array.from(document.querySelectorAll(".tool-button"));
 const swatchButtons = Array.from(document.querySelectorAll(".swatch"));
 
+const TAU = Math.PI * 2;
 const SHAPE_TOOLS = new Set(["line", "rect", "circle", "triangle", "star"]);
 
 const state = {
@@ -22,14 +25,29 @@ const state = {
   tool: "brush",
   color: colorPicker.value,
   size: Number(sizeSlider.value),
+  shapeFill: false,
   history: [],
   maxHistory: 30,
   lastX: 0,
   lastY: 0,
+  lastShiftKey: false,
   startX: 0,
   startY: 0,
   previewSnapshot: null,
   statusTimer: null,
+  selection: {
+    active: false,
+    creating: false,
+    dragging: false,
+    x: 0,
+    y: 0,
+    w: 0,
+    h: 0,
+    layer: null,
+    baseSnapshot: null,
+    offsetX: 0,
+    offsetY: 0,
+  },
 };
 
 function showStatus(message, isError = false) {
@@ -44,7 +62,70 @@ function showStatus(message, isError = false) {
   }, 2200);
 }
 
+function getCanvasScale() {
+  const cssWidth = canvas.clientWidth || 1;
+  return canvas.width / cssWidth;
+}
+
+function normalizeRect(x1, y1, x2, y2) {
+  const left = Math.min(x1, x2);
+  const top = Math.min(y1, y2);
+  const width = Math.abs(x2 - x1);
+  const height = Math.abs(y2 - y1);
+  return { x: left, y: top, w: width, h: height };
+}
+
+function pointInRect(pointX, pointY, rect) {
+  return pointX >= rect.x && pointX <= rect.x + rect.w && pointY >= rect.y && pointY <= rect.y + rect.h;
+}
+
+function clearSelectionState() {
+  state.selection.active = false;
+  state.selection.creating = false;
+  state.selection.dragging = false;
+  state.selection.x = 0;
+  state.selection.y = 0;
+  state.selection.w = 0;
+  state.selection.h = 0;
+  state.selection.layer = null;
+  state.selection.baseSnapshot = null;
+  state.selection.offsetX = 0;
+  state.selection.offsetY = 0;
+}
+
+function drawSelectionOutline(x, y, w, h) {
+  ctx.save();
+  ctx.strokeStyle = "#2563eb";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+  ctx.restore();
+}
+
+function renderFloatingSelection() {
+  if (!state.selection.active || !state.selection.baseSnapshot || !state.selection.layer) return;
+  ctx.putImageData(state.selection.baseSnapshot, 0, 0);
+  ctx.drawImage(state.selection.layer, state.selection.x, state.selection.y, state.selection.w, state.selection.h);
+  drawSelectionOutline(state.selection.x, state.selection.y, state.selection.w, state.selection.h);
+}
+
+function commitSelectionToCanvas(clearAfter = true) {
+  if (!state.selection.active || !state.selection.baseSnapshot || !state.selection.layer) {
+    if (clearAfter) clearSelectionState();
+    return;
+  }
+  ctx.putImageData(state.selection.baseSnapshot, 0, 0);
+  ctx.drawImage(state.selection.layer, state.selection.x, state.selection.y, state.selection.w, state.selection.h);
+  if (clearAfter) {
+    clearSelectionState();
+  }
+}
+
 function resizeCanvas() {
+  if (state.selection.active) {
+    commitSelectionToCanvas(true);
+  }
+
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const old = document.createElement("canvas");
   old.width = canvas.width;
@@ -67,7 +148,18 @@ function resizeCanvas() {
 }
 
 function setTool(tool) {
+  if (state.tool !== "select" && tool === "select") {
+    // keep current canvas as-is
+  }
+  if (state.tool === "select" && tool !== "select" && state.selection.active) {
+    commitSelectionToCanvas(true);
+  }
   state.tool = tool;
+  setToolUI();
+}
+
+function setShapeFillMode(fill) {
+  state.shapeFill = fill;
   setToolUI();
 }
 
@@ -79,9 +171,14 @@ function setToolUI() {
   swatchButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.color.toLowerCase() === state.color.toLowerCase());
   });
+  strokeModeButton.classList.toggle("active", !state.shapeFill);
+  fillModeButton.classList.toggle("active", state.shapeFill);
 }
 
 function pushHistory() {
+  if (state.selection.active) {
+    commitSelectionToCanvas(true);
+  }
   try {
     const snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
     state.history.push(snapshot);
@@ -114,7 +211,7 @@ function applyStrokeStyle() {
   }
 }
 
-function drawStar(cx, cy, outerRadius, innerRadius) {
+function drawStarPath(cx, cy, outerRadius, innerRadius) {
   const spikes = 5;
   let angle = -Math.PI / 2;
   const step = Math.PI / spikes;
@@ -128,12 +225,49 @@ function drawStar(cx, cy, outerRadius, innerRadius) {
     angle += step;
   }
   ctx.closePath();
-  ctx.stroke();
+}
+
+function paintCurrentPath() {
+  if (state.shapeFill) {
+    ctx.fill();
+  } else {
+    ctx.stroke();
+  }
+}
+
+function constrainPoint(tool, x1, y1, x2, y2, shiftKey) {
+  if (!shiftKey) return { x: x2, y: y2 };
+
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+
+  if (tool === "line") {
+    const length = Math.hypot(dx, dy);
+    if (length < 0.001) return { x: x2, y: y2 };
+    const snap = Math.PI / 4;
+    const angle = Math.atan2(dy, dx);
+    const snapped = Math.round(angle / snap) * snap;
+    return {
+      x: x1 + Math.cos(snapped) * length,
+      y: y1 + Math.sin(snapped) * length,
+    };
+  }
+
+  if (tool === "rect" || tool === "circle" || tool === "triangle" || tool === "star") {
+    const side = Math.max(Math.abs(dx), Math.abs(dy));
+    return {
+      x: x1 + (dx >= 0 ? side : -side),
+      y: y1 + (dy >= 0 ? side : -side),
+    };
+  }
+
+  return { x: x2, y: y2 };
 }
 
 function drawShape(tool, x1, y1, x2, y2) {
   ctx.globalCompositeOperation = "source-over";
   ctx.strokeStyle = state.color;
+  ctx.fillStyle = state.color;
   ctx.lineWidth = state.size;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -147,85 +281,169 @@ function drawShape(tool, x1, y1, x2, y2) {
   }
 
   if (tool === "rect") {
-    const left = Math.min(x1, x2);
-    const top = Math.min(y1, y2);
-    const width = Math.abs(x2 - x1);
-    const height = Math.abs(y2 - y1);
-    ctx.strokeRect(left, top, width, height);
+    const rect = normalizeRect(x1, y1, x2, y2);
+    ctx.beginPath();
+    ctx.rect(rect.x, rect.y, rect.w, rect.h);
+    paintCurrentPath();
     return;
   }
 
   if (tool === "circle") {
-    const radius = Math.hypot(x2 - x1, y2 - y1);
+    const rect = normalizeRect(x1, y1, x2, y2);
     ctx.beginPath();
-    ctx.arc(x1, y1, radius, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.ellipse(rect.x + rect.w / 2, rect.y + rect.h / 2, rect.w / 2, rect.h / 2, 0, 0, TAU);
+    paintCurrentPath();
     return;
   }
 
   if (tool === "triangle") {
-    const left = Math.min(x1, x2);
-    const right = Math.max(x1, x2);
-    const top = Math.min(y1, y2);
-    const bottom = Math.max(y1, y2);
+    const rect = normalizeRect(x1, y1, x2, y2);
     ctx.beginPath();
-    ctx.moveTo((left + right) / 2, top);
-    ctx.lineTo(right, bottom);
-    ctx.lineTo(left, bottom);
+    ctx.moveTo(rect.x + rect.w / 2, rect.y);
+    ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
+    ctx.lineTo(rect.x, rect.y + rect.h);
     ctx.closePath();
-    ctx.stroke();
+    paintCurrentPath();
     return;
   }
 
   if (tool === "star") {
-    const cx = (x1 + x2) / 2;
-    const cy = (y1 + y2) / 2;
-    const outer = Math.max(1, Math.min(Math.abs(x2 - x1), Math.abs(y2 - y1)) / 2);
-    drawStar(cx, cy, outer, outer * 0.45);
+    const rect = normalizeRect(x1, y1, x2, y2);
+    const outer = Math.max(1, Math.min(rect.w, rect.h) / 2);
+    const cx = rect.x + rect.w / 2;
+    const cy = rect.y + rect.h / 2;
+    drawStarPath(cx, cy, outer, outer * 0.45);
+    paintCurrentPath();
   }
+}
+
+function createSelectionLayer(rect) {
+  const scale = getCanvasScale();
+  const sx = Math.round(rect.x * scale);
+  const sy = Math.round(rect.y * scale);
+  const sw = Math.max(1, Math.round(rect.w * scale));
+  const sh = Math.max(1, Math.round(rect.h * scale));
+  const imageData = ctx.getImageData(sx, sy, sw, sh);
+  const layer = document.createElement("canvas");
+  layer.width = sw;
+  layer.height = sh;
+  layer.getContext("2d").putImageData(imageData, 0, 0);
+  return layer;
+}
+
+function beginSelectionFromRect(rect) {
+  const layer = createSelectionLayer(rect);
+  ctx.clearRect(rect.x, rect.y, rect.w, rect.h);
+
+  state.selection.active = true;
+  state.selection.creating = false;
+  state.selection.dragging = false;
+  state.selection.x = rect.x;
+  state.selection.y = rect.y;
+  state.selection.w = rect.w;
+  state.selection.h = rect.h;
+  state.selection.layer = layer;
+  state.selection.baseSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  state.selection.offsetX = 0;
+  state.selection.offsetY = 0;
+
+  renderFloatingSelection();
 }
 
 function beginDraw(event) {
   if (event.pointerType === "mouse" && event.button !== 0) return;
   event.preventDefault();
   const p = getPoint(event);
+
   state.drawing = true;
   state.pointerId = event.pointerId;
   state.startX = p.x;
   state.startY = p.y;
   state.lastX = p.x;
   state.lastY = p.y;
+  state.lastShiftKey = event.shiftKey;
   canvas.setPointerCapture(event.pointerId);
+
+  if (state.tool === "select") {
+    if (state.selection.active && pointInRect(p.x, p.y, state.selection)) {
+      state.selection.dragging = true;
+      state.selection.offsetX = p.x - state.selection.x;
+      state.selection.offsetY = p.y - state.selection.y;
+      return;
+    }
+
+    if (state.selection.active) {
+      commitSelectionToCanvas(true);
+    }
+
+    pushHistory();
+    state.selection.creating = true;
+    state.previewSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  if (state.selection.active) {
+    commitSelectionToCanvas(true);
+  }
+
   pushHistory();
 
   if (SHAPE_TOOLS.has(state.tool)) {
     state.previewSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  } else {
-    applyStrokeStyle();
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(p.x + 0.001, p.y + 0.001);
-    ctx.stroke();
+    return;
   }
+
+  applyStrokeStyle();
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y);
+  ctx.lineTo(p.x + 0.001, p.y + 0.001);
+  ctx.stroke();
 }
 
 function draw(event) {
   if (!state.drawing || event.pointerId !== state.pointerId) return;
   event.preventDefault();
   const p = getPoint(event);
+  const prevX = state.lastX;
+  const prevY = state.lastY;
+  state.lastShiftKey = event.shiftKey;
+
+  if (state.tool === "select") {
+    if (state.selection.creating) {
+      if (!state.previewSnapshot) return;
+      ctx.putImageData(state.previewSnapshot, 0, 0);
+      const rect = normalizeRect(state.startX, state.startY, p.x, p.y);
+      drawSelectionOutline(rect.x, rect.y, rect.w, rect.h);
+      state.lastX = p.x;
+      state.lastY = p.y;
+      return;
+    }
+
+    if (state.selection.dragging) {
+      state.selection.x = p.x - state.selection.offsetX;
+      state.selection.y = p.y - state.selection.offsetY;
+      renderFloatingSelection();
+    }
+    state.lastX = p.x;
+    state.lastY = p.y;
+    return;
+  }
 
   if (SHAPE_TOOLS.has(state.tool)) {
     if (!state.previewSnapshot) return;
+    const constrained = constrainPoint(state.tool, state.startX, state.startY, p.x, p.y, event.shiftKey);
     ctx.putImageData(state.previewSnapshot, 0, 0);
-    drawShape(state.tool, state.startX, state.startY, p.x, p.y);
-  } else {
-    applyStrokeStyle();
-    ctx.beginPath();
-    ctx.moveTo(state.lastX, state.lastY);
-    ctx.lineTo(p.x, p.y);
-    ctx.stroke();
+    drawShape(state.tool, state.startX, state.startY, constrained.x, constrained.y);
+    state.lastX = p.x;
+    state.lastY = p.y;
+    return;
   }
 
+  applyStrokeStyle();
+  ctx.beginPath();
+  ctx.moveTo(prevX, prevY);
+  ctx.lineTo(p.x, p.y);
+  ctx.stroke();
   state.lastX = p.x;
   state.lastY = p.y;
 }
@@ -234,13 +452,33 @@ function endDraw(event) {
   if (!state.drawing) return;
   if (event && state.pointerId !== null && event.pointerId !== state.pointerId) return;
 
-  if (SHAPE_TOOLS.has(state.tool) && state.previewSnapshot) {
+  if (state.tool === "select") {
+    if (state.selection.creating && state.previewSnapshot) {
+      ctx.putImageData(state.previewSnapshot, 0, 0);
+      const rect = normalizeRect(state.startX, state.startY, state.lastX, state.lastY);
+      if (rect.w >= 3 && rect.h >= 3) {
+        beginSelectionFromRect(rect);
+      }
+    } else if (state.selection.dragging) {
+      state.selection.dragging = false;
+      renderFloatingSelection();
+    }
+  } else if (SHAPE_TOOLS.has(state.tool) && state.previewSnapshot) {
+    const constrained = constrainPoint(
+      state.tool,
+      state.startX,
+      state.startY,
+      state.lastX,
+      state.lastY,
+      state.lastShiftKey,
+    );
     ctx.putImageData(state.previewSnapshot, 0, 0);
-    drawShape(state.tool, state.startX, state.startY, state.lastX, state.lastY);
+    drawShape(state.tool, state.startX, state.startY, constrained.x, constrained.y);
   }
 
   state.drawing = false;
   state.previewSnapshot = null;
+  state.selection.creating = false;
   if (state.pointerId !== null) {
     try {
       if (canvas.hasPointerCapture(state.pointerId)) {
@@ -255,6 +493,9 @@ function endDraw(event) {
 }
 
 function undo() {
+  if (state.selection.active) {
+    clearSelectionState();
+  }
   const snapshot = state.history.pop();
   if (!snapshot) return;
   ctx.putImageData(snapshot, 0, 0);
@@ -268,6 +509,9 @@ function clearCanvas() {
 }
 
 function savePng() {
+  if (state.selection.active) {
+    renderFloatingSelection();
+  }
   const link = document.createElement("a");
   link.download = `paint-${Date.now()}.png`;
   link.href = canvas.toDataURL("image/png");
@@ -284,6 +528,10 @@ async function copyCanvasToClipboard() {
   if (!navigator.clipboard || typeof window.ClipboardItem === "undefined") {
     showStatus("클립보드 복사를 지원하지 않는 브라우저입니다.", true);
     return;
+  }
+
+  if (state.selection.active) {
+    renderFloatingSelection();
   }
 
   try {
@@ -372,6 +620,12 @@ function handlePasteEvent(event) {
 function handleShortcuts(event) {
   const isMacLike = navigator.platform.toLowerCase().includes("mac");
   const meta = isMacLike ? event.metaKey : event.ctrlKey;
+
+  if (event.key === "Escape" && state.selection.active) {
+    commitSelectionToCanvas(true);
+    return;
+  }
+
   if (!meta) return;
 
   const key = event.key.toLowerCase();
@@ -424,6 +678,13 @@ function initEvents() {
         setToolUI();
       }
     });
+  });
+
+  strokeModeButton.addEventListener("click", () => {
+    setShapeFillMode(false);
+  });
+  fillModeButton.addEventListener("click", () => {
+    setShapeFillMode(true);
   });
 
   copyButton.addEventListener("click", copyCanvasToClipboard);
