@@ -33,9 +33,6 @@
           <button class="tool-button" data-tool="star" type="button" title="별">
             <span class="icon" aria-hidden="true">★</span><span>별</span>
           </button>
-          <button class="tool-button" data-tool="text" type="button" title="텍스트">
-            <span class="icon" aria-hidden="true">T</span><span>텍스트</span>
-          </button>
           <button class="tool-button" data-tool="select" type="button" title="선택/이동">
             <span class="icon" aria-hidden="true">▣</span><span>선택/이동</span>
           </button>
@@ -58,15 +55,10 @@
           </div>
         </section>
 
-        <section class="control-group" aria-label="선 굵기 설정">
-          <label class="picker-label">
-            <span>굵기</span>
-            <input id="sizeSlider" type="range" min="1" max="64" value="6" />
-            <strong id="sizeValue">6px</strong>
-          </label>
-        </section>
-
         <section class="control-group" aria-label="텍스트 설정">
+          <button class="tool-button" data-tool="text" type="button" title="텍스트">
+            <span class="icon" aria-hidden="true">T</span><span>텍스트</span>
+          </button>
           <label class="picker-label">
             <span>글꼴</span>
             <select id="textFontFamily">
@@ -92,6 +84,14 @@
             <span>텍스트 크기</span>
             <input id="textSizeSlider" type="range" min="10" max="160" value="42" />
             <strong id="textSizeValue">42px</strong>
+          </label>
+        </section>
+
+        <section class="control-group" aria-label="선 굵기 설정">
+          <label class="picker-label">
+            <span>굵기</span>
+            <input id="sizeSlider" type="range" min="1" max="64" value="6" />
+            <strong id="sizeValue">6px</strong>
           </label>
         </section>
 

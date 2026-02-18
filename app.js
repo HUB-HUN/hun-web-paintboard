@@ -155,23 +155,18 @@ function applyViewTransform() {
 }
 
 function updateCanvasCursor() {
+  let cursor = "crosshair";
   if (state.view.panning) {
-    canvas.style.cursor = "grabbing";
-    return;
+    cursor = "grabbing";
+  } else if (state.view.spacePressed) {
+    cursor = "grab";
+  } else if (state.tool === "text") {
+    cursor = "text";
+  } else if (state.tool === "select") {
+    cursor = "move";
   }
-  if (state.view.spacePressed) {
-    canvas.style.cursor = "grab";
-    return;
-  }
-  if (state.tool === "text") {
-    canvas.style.cursor = "text";
-    return;
-  }
-  if (state.tool === "select") {
-    canvas.style.cursor = "move";
-    return;
-  }
-  canvas.style.cursor = "crosshair";
+  canvas.style.cursor = cursor;
+  canvasWrap.style.cursor = cursor;
 }
 
 function shouldStartPan(event) {
@@ -186,15 +181,15 @@ function startPan(event) {
   state.view.panStartClientY = event.clientY;
   state.view.panStartOffsetX = state.view.offsetX;
   state.view.panStartOffsetY = state.view.offsetY;
-  canvas.setPointerCapture(event.pointerId);
+  canvasWrap.setPointerCapture(event.pointerId);
   updateCanvasCursor();
 }
 
 function stopPan() {
   if (state.view.panPointerId !== null) {
     try {
-      if (canvas.hasPointerCapture(state.view.panPointerId)) {
-        canvas.releasePointerCapture(state.view.panPointerId);
+      if (canvasWrap.hasPointerCapture(state.view.panPointerId)) {
+        canvasWrap.releasePointerCapture(state.view.panPointerId);
       }
     } catch {
       // ignore
@@ -668,7 +663,7 @@ function beginDraw(event) {
   state.lastX = p.x;
   state.lastY = p.y;
   state.lastShiftKey = event.shiftKey;
-  canvas.setPointerCapture(event.pointerId);
+  canvasWrap.setPointerCapture(event.pointerId);
 
   if (state.tool === "select") {
     if (state.selection.active && pointInRect(p.x, p.y, state.selection)) {
@@ -800,8 +795,8 @@ function endDraw(event) {
   state.selection.creating = false;
   if (state.pointerId !== null) {
     try {
-      if (canvas.hasPointerCapture(state.pointerId)) {
-        canvas.releasePointerCapture(state.pointerId);
+      if (canvasWrap.hasPointerCapture(state.pointerId)) {
+        canvasWrap.releasePointerCapture(state.pointerId);
       }
     } catch {
       // ignore
@@ -1016,11 +1011,11 @@ function handleShortcuts(event) {
 }
 
 function initEvents() {
-  canvas.addEventListener("pointerdown", beginDraw, { passive: false });
-  canvas.addEventListener("pointermove", draw, { passive: false });
-  canvas.addEventListener("pointerup", endDraw);
-  canvas.addEventListener("pointerleave", endDraw);
-  canvas.addEventListener("pointercancel", endDraw);
+  canvasWrap.addEventListener("pointerdown", beginDraw, { passive: false });
+  canvasWrap.addEventListener("pointermove", draw, { passive: false });
+  canvasWrap.addEventListener("pointerup", endDraw);
+  canvasWrap.addEventListener("pointerleave", endDraw);
+  canvasWrap.addEventListener("pointercancel", endDraw);
   canvasWrap.addEventListener("wheel", handleWheel, { passive: false });
 
   colorPicker.addEventListener("change", () => {
