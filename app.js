@@ -38,12 +38,21 @@ const state = {
   startX: 0,
   startY: 0,
   previewSnapshot: null,
+  world: {
+    width: 0,
+    height: 0,
+    minWidth: 2600,
+    minHeight: 1800,
+    scaleFactor: 2.3,
+    initialized: false,
+  },
   view: {
-    scale: 1,
-    minScale: 0.35,
+    scale: 1.2,
+    minScale: 0.55,
     maxScale: 4,
     offsetX: 0,
     offsetY: 0,
+    initialized: false,
     panning: false,
     panPointerId: null,
     panStartClientX: 0,
@@ -103,7 +112,7 @@ function clampViewOffset() {
   const viewportHeight = canvasWrap.clientHeight;
   const scaledWidth = canvas.clientWidth * state.view.scale;
   const scaledHeight = canvas.clientHeight * state.view.scale;
-  const overflowMargin = 120;
+  const overflowMargin = 0;
 
   let minX;
   let maxX;
@@ -117,6 +126,17 @@ function clampViewOffset() {
 
   state.view.offsetX = clampNumber(state.view.offsetX, minX, maxX);
   state.view.offsetY = clampNumber(state.view.offsetY, minY, maxY);
+}
+
+function getDefaultViewScale() {
+  return clampNumber(Math.max(1.15, state.view.minScale * 1.2), state.view.minScale, state.view.maxScale);
+}
+
+function centerViewOn(worldX, worldY) {
+  const viewportWidth = canvasWrap.clientWidth;
+  const viewportHeight = canvasWrap.clientHeight;
+  state.view.offsetX = viewportWidth / 2 - worldX * state.view.scale;
+  state.view.offsetY = viewportHeight / 2 - worldY * state.view.scale;
 }
 
 function canvasPointToViewport(x, y) {
@@ -203,9 +223,8 @@ function zoomAtClientPoint(clientX, clientY, nextScale) {
 }
 
 function resetView() {
-  state.view.scale = 1;
-  state.view.offsetX = 0;
-  state.view.offsetY = 0;
+  state.view.scale = getDefaultViewScale();
+  centerViewOn(canvas.clientWidth / 2, canvas.clientHeight / 2);
   applyViewTransform();
 }
 
@@ -332,8 +351,8 @@ function openTextEditor(x, y) {
   input.className = "text-editor";
   input.placeholder = "텍스트 입력 후 Enter";
 
-  state.text.x = Math.max(0, Math.min(x, canvas.clientWidth - 8));
-  state.text.y = Math.max(0, Math.min(y, canvas.clientHeight - state.text.size));
+  state.text.x = clampNumber(x, 0, canvas.clientWidth - 1);
+  state.text.y = clampNumber(y, 0, canvas.clientHeight - 1);
   state.text.editorEl = input;
   state.text.editing = true;
 
@@ -394,6 +413,12 @@ function resizeCanvas() {
     closeTextEditor(true);
   }
 
+  const viewportWidth = Math.max(1, canvasWrap.clientWidth);
+  const viewportHeight = Math.max(1, canvasWrap.clientHeight);
+  const prevScale = state.view.scale || 1;
+  const previousCenterX = (viewportWidth / 2 - state.view.offsetX) / prevScale;
+  const previousCenterY = (viewportHeight / 2 - state.view.offsetY) / prevScale;
+
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const old = document.createElement("canvas");
   old.width = canvas.width;
@@ -401,18 +426,44 @@ function resizeCanvas() {
   const oldCtx = old.getContext("2d");
   oldCtx.drawImage(canvas, 0, 0);
 
-  canvas.width = Math.floor(canvas.clientWidth * dpr);
-  canvas.height = Math.floor(canvas.clientHeight * dpr);
+  if (!state.world.initialized) {
+    state.world.width = Math.max(Math.round(viewportWidth * state.world.scaleFactor), state.world.minWidth);
+    state.world.height = Math.max(Math.round(viewportHeight * state.world.scaleFactor), state.world.minHeight);
+    state.world.initialized = true;
+  } else {
+    state.world.width = Math.max(state.world.width, Math.round(viewportWidth * 1.35));
+    state.world.height = Math.max(state.world.height, Math.round(viewportHeight * 1.35));
+  }
+
+  canvas.style.width = `${state.world.width}px`;
+  canvas.style.height = `${state.world.height}px`;
+
+  canvas.width = Math.floor(state.world.width * dpr);
+  canvas.height = Math.floor(state.world.height * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 
   if (old.width > 0 && old.height > 0) {
     ctx.drawImage(old, 0, 0, old.width / dpr, old.height / dpr);
-  } else {
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   }
+
+  const fitScale = Math.max(viewportWidth / canvas.clientWidth, viewportHeight / canvas.clientHeight);
+  state.view.minScale = clampNumber(Math.max(0.55, fitScale), 0.2, state.view.maxScale);
+
+  if (!state.view.initialized) {
+    state.view.scale = getDefaultViewScale();
+    centerViewOn(canvas.clientWidth / 2, canvas.clientHeight / 2);
+    state.view.initialized = true;
+  } else {
+    state.view.scale = clampNumber(state.view.scale, state.view.minScale, state.view.maxScale);
+    const centerX = Number.isFinite(previousCenterX) ? previousCenterX : canvas.clientWidth / 2;
+    const centerY = Number.isFinite(previousCenterY) ? previousCenterY : canvas.clientHeight / 2;
+    centerViewOn(clampNumber(centerX, 0, canvas.clientWidth), clampNumber(centerY, 0, canvas.clientHeight));
+  }
+
   applyViewTransform();
 }
 
@@ -467,9 +518,11 @@ function pushHistory() {
 }
 
 function getPoint(event) {
-  const rect = canvasWrap.getBoundingClientRect();
-  const rawX = (event.clientX - rect.left - state.view.offsetX) / state.view.scale;
-  const rawY = (event.clientY - rect.top - state.view.offsetY) / state.view.scale;
+  const rect = canvas.getBoundingClientRect();
+  const width = rect.width || 1;
+  const height = rect.height || 1;
+  const rawX = ((event.clientX - rect.left) / width) * canvas.clientWidth;
+  const rawY = ((event.clientY - rect.top) / height) * canvas.clientHeight;
   return {
     x: clampNumber(rawX, 0, canvas.clientWidth),
     y: clampNumber(rawY, 0, canvas.clientHeight),
@@ -1006,17 +1059,27 @@ function handleShortcuts(event) {
   if (getTargetIsTypingElement(event.target)) return;
 
   const key = event.key.toLowerCase();
+  const zoomInPressed =
+    key === "=" ||
+    key === "+" ||
+    event.code === "Equal" ||
+    event.code === "NumpadAdd";
+  const zoomOutPressed =
+    key === "-" ||
+    key === "_" ||
+    event.code === "Minus" ||
+    event.code === "NumpadSubtract";
   if (key === "c") {
     event.preventDefault();
     copyCanvasToClipboard();
   } else if (key === "z") {
     event.preventDefault();
     undo();
-  } else if (key === "=" || key === "+") {
+  } else if (zoomInPressed) {
     event.preventDefault();
     const rect = canvasWrap.getBoundingClientRect();
     zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, state.view.scale * 1.15);
-  } else if (key === "-") {
+  } else if (zoomOutPressed) {
     event.preventDefault();
     const rect = canvasWrap.getBoundingClientRect();
     zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, state.view.scale / 1.15);
