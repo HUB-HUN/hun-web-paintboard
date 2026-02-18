@@ -67,6 +67,18 @@ function getCanvasScale() {
   return canvas.width / cssWidth;
 }
 
+function canvasToPngBlob(targetCanvas) {
+  return new Promise((resolve, reject) => {
+    targetCanvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("blob_generation_failed"));
+        return;
+      }
+      resolve(blob);
+    }, "image/png");
+  });
+}
+
 function normalizeRect(x1, y1, x2, y2) {
   const left = Math.min(x1, x2);
   const top = Math.min(y1, y2);
@@ -530,15 +542,26 @@ async function copyCanvasToClipboard() {
     return;
   }
 
-  if (state.selection.active) {
-    renderFloatingSelection();
-  }
-
   try {
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-    if (!blob) throw new Error("blob_generation_failed");
+    let sourceCanvas = canvas;
+
+    if (state.selection.active && state.selection.layer) {
+      const selectedCanvas = document.createElement("canvas");
+      selectedCanvas.width = state.selection.layer.width;
+      selectedCanvas.height = state.selection.layer.height;
+      const selectedCtx = selectedCanvas.getContext("2d");
+      // Selection copy should default transparent pixels to white.
+      selectedCtx.fillStyle = "#ffffff";
+      selectedCtx.fillRect(0, 0, selectedCanvas.width, selectedCanvas.height);
+      selectedCtx.drawImage(state.selection.layer, 0, 0);
+      sourceCanvas = selectedCanvas;
+    } else if (state.selection.active) {
+      renderFloatingSelection();
+    }
+
+    const blob = await canvasToPngBlob(sourceCanvas);
     await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-    showStatus("캔버스를 클립보드에 복사했습니다.");
+    showStatus(state.selection.active ? "선택 영역을 클립보드에 복사했습니다." : "캔버스를 클립보드에 복사했습니다.");
   } catch {
     showStatus("클립보드 복사에 실패했습니다.", true);
   }
@@ -586,11 +609,33 @@ async function pasteImageBlob(blob) {
   try {
     const image = await loadBlobToImage(blob);
     pushHistory();
-    const x = (canvas.clientWidth - image.width) / 2;
-    const y = (canvas.clientHeight - image.height) / 2;
-    ctx.globalCompositeOperation = "source-over";
-    ctx.drawImage(image, x, y, image.width, image.height);
-    showStatus("비트맵 이미지를 캔버스에 붙여넣었습니다.");
+
+    const scale = getCanvasScale();
+    const drawWidth = image.width / scale;
+    const drawHeight = image.height / scale;
+    const x = (canvas.clientWidth - drawWidth) / 2;
+    const y = (canvas.clientHeight - drawHeight) / 2;
+
+    const layer = document.createElement("canvas");
+    layer.width = image.width;
+    layer.height = image.height;
+    layer.getContext("2d").drawImage(image, 0, 0);
+
+    state.selection.active = true;
+    state.selection.creating = false;
+    state.selection.dragging = false;
+    state.selection.x = x;
+    state.selection.y = y;
+    state.selection.w = drawWidth;
+    state.selection.h = drawHeight;
+    state.selection.layer = layer;
+    state.selection.baseSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    state.selection.offsetX = 0;
+    state.selection.offsetY = 0;
+
+    setTool("select");
+    renderFloatingSelection();
+    showStatus("붙여넣기 완료. 선택 상태로 바로 이동할 수 있습니다.");
   } catch {
     showStatus("이미지 붙여넣기에 실패했습니다.", true);
   }
