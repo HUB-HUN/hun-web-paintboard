@@ -3,7 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hun Paintboard</title>
+    <meta name="description" content="WebPaint 웹그림판, 웹포토샵처럼 사용할 수 있는 온라인 드로잉 도구" />
+    <meta name="keywords" content="웹그림판, 웹포토샵, WebPaint, online paint, drawing tool" />
+    <title>WebPaint</title>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/fonts-archive/Pretendard/Pretendard.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy/Paperlogy.css" />
@@ -12,9 +14,12 @@
   <body>
     <main class="app">
       <header class="toolbar" aria-label="그림판 도구">
-        <h1 class="logo">웹그림판</h1>
+        <h1 class="logo">WebPaint</h1>
 
         <section class="tool-group" aria-label="그리기 도구">
+          <button class="tool-button" data-tool="select" type="button" title="선택/이동">
+            <span class="icon" aria-hidden="true">▣</span><span>선택/이동</span>
+          </button>
           <button class="tool-button active" data-tool="brush" type="button" title="브러시">
             <span class="icon" aria-hidden="true">✎</span><span>브러시</span>
           </button>
@@ -37,9 +42,6 @@
           </button>
           <button class="tool-button" data-tool="star" type="button" title="별">
             <span class="icon" aria-hidden="true">★</span><span>별</span>
-          </button>
-          <button class="tool-button" data-tool="select" type="button" title="선택/이동">
-            <span class="icon" aria-hidden="true">▣</span><span>선택/이동</span>
           </button>
           <button class="tool-button" data-tool="eraser" type="button" title="지우개">
             <span class="icon" aria-hidden="true">⌫</span><span>지우개</span>
