@@ -1,0 +1,93 @@
+:root {
+  --bg: #f2f4f7;
+  --panel: #ffffff;
+  --text: #111827;
+  --border: #d0d7e2;
+  --accent: #0f172a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  font-family: "Pretendard", "Noto Sans KR", system-ui, sans-serif;
+  color: var(--text);
+  background: linear-gradient(180deg, #f8fafc 0%, #e7edf5 100%);
+}
+
+.app {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+  padding: 12px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.toolbar h1 {
+  margin: 0 12px 0 2px;
+  font-size: 16px;
+}
+
+.toolbar label {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.toolbar button {
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.toolbar button.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.canvas-wrap {
+  min-height: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+#paintCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  background: #fff;
+}
+
+@media (max-width: 700px) {
+  .toolbar h1 {
+    width: 100%;
+    margin-bottom: 4px;
+  }
+}

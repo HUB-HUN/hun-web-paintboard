@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hun Paintboard</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="toolbar" aria-label="그림판 도구">
+        <h1>Hun Paintboard</h1>
+        <label>
+          색상
+          <input id="colorPicker" type="color" value="#111111" />
+        </label>
+        <label>
+          굵기
+          <input id="sizeSlider" type="range" min="1" max="64" value="6" />
+          <span id="sizeValue">6px</span>
+        </label>
+        <button id="eraserButton" type="button">지우개</button>
+        <button id="undoButton" type="button">되돌리기</button>
+        <button id="clearButton" type="button">전체 지우기</button>
+        <button id="saveButton" type="button">PNG 저장</button>
+      </header>
+      <section class="canvas-wrap">
+        <canvas id="paintCanvas" aria-label="그림판 캔버스"></canvas>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
