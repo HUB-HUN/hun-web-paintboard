@@ -104,29 +104,16 @@ function clampViewOffset() {
   const scaledWidth = canvas.clientWidth * state.view.scale;
   const scaledHeight = canvas.clientHeight * state.view.scale;
   const overflowMargin = 120;
-  const centerMargin = 48;
 
   let minX;
   let maxX;
-  if (scaledWidth >= viewportWidth) {
-    minX = viewportWidth - scaledWidth - overflowMargin;
-    maxX = overflowMargin;
-  } else {
-    const centerX = (viewportWidth - scaledWidth) / 2;
-    minX = centerX - centerMargin;
-    maxX = centerX + centerMargin;
-  }
+  minX = viewportWidth - scaledWidth - overflowMargin;
+  maxX = overflowMargin;
 
   let minY;
   let maxY;
-  if (scaledHeight >= viewportHeight) {
-    minY = viewportHeight - scaledHeight - overflowMargin;
-    maxY = overflowMargin;
-  } else {
-    const centerY = (viewportHeight - scaledHeight) / 2;
-    minY = centerY - centerMargin;
-    maxY = centerY + centerMargin;
-  }
+  minY = viewportHeight - scaledHeight - overflowMargin;
+  maxY = overflowMargin;
 
   state.view.offsetX = clampNumber(state.view.offsetX, minX, maxX);
   state.view.offsetY = clampNumber(state.view.offsetY, minY, maxY);
@@ -489,6 +476,33 @@ function getPoint(event) {
   };
 }
 
+function keepPointInteractive(event) {
+  const rect = canvasWrap.getBoundingClientRect();
+  const rawX = (event.clientX - rect.left - state.view.offsetX) / state.view.scale;
+  const rawY = (event.clientY - rect.top - state.view.offsetY) / state.view.scale;
+  let moved = false;
+
+  if (rawX < 0) {
+    state.view.offsetX += rawX * state.view.scale;
+    moved = true;
+  } else if (rawX > canvas.clientWidth) {
+    state.view.offsetX += (rawX - canvas.clientWidth) * state.view.scale;
+    moved = true;
+  }
+
+  if (rawY < 0) {
+    state.view.offsetY += rawY * state.view.scale;
+    moved = true;
+  } else if (rawY > canvas.clientHeight) {
+    state.view.offsetY += (rawY - canvas.clientHeight) * state.view.scale;
+    moved = true;
+  }
+
+  if (moved) {
+    applyViewTransform();
+  }
+}
+
 function applyStrokeStyle() {
   ctx.lineWidth = state.size;
   ctx.lineCap = "round";
@@ -649,6 +663,7 @@ function beginDraw(event) {
   }
   if (event.pointerType === "mouse" && event.button !== 0) return;
   event.preventDefault();
+  keepPointInteractive(event);
   const p = getPoint(event);
 
   if (state.tool === "text") {
@@ -712,6 +727,7 @@ function draw(event) {
   }
   if (!state.drawing || event.pointerId !== state.pointerId) return;
   event.preventDefault();
+  keepPointInteractive(event);
   const p = getPoint(event);
   const prevX = state.lastX;
   const prevY = state.lastY;
