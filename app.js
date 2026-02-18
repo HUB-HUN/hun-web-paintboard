@@ -1,4 +1,5 @@
 const canvas = document.getElementById("paintCanvas");
+const canvasWrap = document.querySelector(".canvas-wrap");
 const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
 const colorPicker = document.getElementById("colorPicker");
@@ -12,6 +13,10 @@ const pasteButton = document.getElementById("pasteButton");
 const statusText = document.getElementById("statusText");
 const strokeModeButton = document.getElementById("strokeModeButton");
 const fillModeButton = document.getElementById("fillModeButton");
+const textFontFamily = document.getElementById("textFontFamily");
+const textFontWeight = document.getElementById("textFontWeight");
+const textSizeSlider = document.getElementById("textSizeSlider");
+const textSizeValue = document.getElementById("textSizeValue");
 
 const toolButtons = Array.from(document.querySelectorAll(".tool-button"));
 const swatchButtons = Array.from(document.querySelectorAll(".swatch"));
@@ -35,6 +40,15 @@ const state = {
   startY: 0,
   previewSnapshot: null,
   statusTimer: null,
+  text: {
+    family: textFontFamily.value,
+    weight: Number(textFontWeight.value),
+    size: Number(textSizeSlider.value),
+    editing: false,
+    editorEl: null,
+    x: 0,
+    y: 0,
+  },
   selection: {
     active: false,
     creating: false,
@@ -105,6 +119,90 @@ function clearSelectionState() {
   state.selection.offsetY = 0;
 }
 
+function getTextFamilyCssName(family) {
+  if (family === "Paperlogy") {
+    return '"Paperlogy", "Pretendard", sans-serif';
+  }
+  return '"Pretendard", sans-serif';
+}
+
+function getTextFontCss() {
+  return `${state.text.weight} ${state.text.size}px ${getTextFamilyCssName(state.text.family)}`;
+}
+
+function updateEditorVisual() {
+  if (!state.text.editorEl) return;
+  state.text.editorEl.style.fontFamily = getTextFamilyCssName(state.text.family);
+  state.text.editorEl.style.fontWeight = String(state.text.weight);
+  state.text.editorEl.style.fontSize = `${state.text.size}px`;
+  state.text.editorEl.style.color = state.color;
+}
+
+function closeTextEditor(commit) {
+  const editor = state.text.editorEl;
+  if (!editor) return;
+
+  const text = editor.value.trim();
+  const x = state.text.x;
+  const y = state.text.y;
+
+  editor.remove();
+  state.text.editorEl = null;
+  state.text.editing = false;
+
+  if (!commit || text.length === 0) return;
+
+  pushHistory();
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = state.color;
+  ctx.font = getTextFontCss();
+  ctx.textBaseline = "top";
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+function openTextEditor(x, y) {
+  if (state.selection.active) {
+    commitSelectionToCanvas(true);
+  }
+  if (state.text.editing) {
+    closeTextEditor(true);
+  }
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "text-editor";
+  input.placeholder = "텍스트 입력 후 Enter";
+  input.style.left = `${Math.max(0, Math.min(x, canvas.clientWidth - 32))}px`;
+  input.style.top = `${Math.max(0, Math.min(y, canvas.clientHeight - 32))}px`;
+
+  state.text.x = Math.max(0, Math.min(x, canvas.clientWidth - 8));
+  state.text.y = Math.max(0, Math.min(y, canvas.clientHeight - state.text.size));
+  state.text.editorEl = input;
+  state.text.editing = true;
+
+  updateEditorVisual();
+  canvasWrap.appendChild(input);
+  input.focus();
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      closeTextEditor(true);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeTextEditor(false);
+    }
+  });
+
+  input.addEventListener("blur", () => {
+    if (state.text.editing) {
+      closeTextEditor(true);
+    }
+  });
+}
+
 function drawSelectionOutline(x, y, w, h) {
   ctx.save();
   ctx.strokeStyle = "#2563eb";
@@ -137,6 +235,9 @@ function resizeCanvas() {
   if (state.selection.active) {
     commitSelectionToCanvas(true);
   }
+  if (state.text.editing) {
+    closeTextEditor(true);
+  }
 
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const old = document.createElement("canvas");
@@ -160,6 +261,9 @@ function resizeCanvas() {
 }
 
 function setTool(tool) {
+  if (state.tool === "text" && tool !== "text" && state.text.editing) {
+    closeTextEditor(true);
+  }
   if (state.tool !== "select" && tool === "select") {
     // keep current canvas as-is
   }
@@ -177,6 +281,7 @@ function setShapeFillMode(fill) {
 
 function setToolUI() {
   sizeValue.textContent = `${state.size}px`;
+  textSizeValue.textContent = `${state.text.size}px`;
   toolButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.tool === state.tool);
   });
@@ -185,6 +290,7 @@ function setToolUI() {
   });
   strokeModeButton.classList.toggle("active", !state.shapeFill);
   fillModeButton.classList.toggle("active", state.shapeFill);
+  updateEditorVisual();
 }
 
 function pushHistory() {
@@ -367,6 +473,11 @@ function beginDraw(event) {
   event.preventDefault();
   const p = getPoint(event);
 
+  if (state.tool === "text") {
+    openTextEditor(p.x, p.y);
+    return;
+  }
+
   state.drawing = true;
   state.pointerId = event.pointerId;
   state.startX = p.x;
@@ -505,6 +616,9 @@ function endDraw(event) {
 }
 
 function undo() {
+  if (state.text.editing) {
+    closeTextEditor(false);
+  }
   if (state.selection.active) {
     clearSelectionState();
   }
@@ -514,6 +628,9 @@ function undo() {
 }
 
 function clearCanvas() {
+  if (state.text.editing) {
+    closeTextEditor(true);
+  }
   pushHistory();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#ffffff";
@@ -521,6 +638,9 @@ function clearCanvas() {
 }
 
 function savePng() {
+  if (state.text.editing) {
+    closeTextEditor(true);
+  }
   if (state.selection.active) {
     renderFloatingSelection();
   }
@@ -550,13 +670,14 @@ async function copyCanvasToClipboard() {
       selectedCanvas.width = state.selection.layer.width;
       selectedCanvas.height = state.selection.layer.height;
       const selectedCtx = selectedCanvas.getContext("2d");
-      // Selection copy should default transparent pixels to white.
       selectedCtx.fillStyle = "#ffffff";
       selectedCtx.fillRect(0, 0, selectedCanvas.width, selectedCanvas.height);
       selectedCtx.drawImage(state.selection.layer, 0, 0);
       sourceCanvas = selectedCanvas;
     } else if (state.selection.active) {
       renderFloatingSelection();
+    } else if (state.text.editing) {
+      closeTextEditor(true);
     }
 
     const blob = await canvasToPngBlob(sourceCanvas);
@@ -607,6 +728,9 @@ function loadBlobToImage(blob) {
 async function pasteImageBlob(blob) {
   if (!blob) return;
   try {
+    if (state.text.editing) {
+      closeTextEditor(true);
+    }
     const image = await loadBlobToImage(blob);
     pushHistory();
 
@@ -697,11 +821,30 @@ function initEvents() {
     if (state.tool === "eraser") {
       setTool("brush");
     }
+    updateEditorVisual();
     setToolUI();
   });
 
   sizeSlider.addEventListener("input", () => {
     state.size = Number(sizeSlider.value);
+    setToolUI();
+  });
+
+  textFontFamily.addEventListener("change", () => {
+    state.text.family = textFontFamily.value;
+    updateEditorVisual();
+    setToolUI();
+  });
+
+  textFontWeight.addEventListener("change", () => {
+    state.text.weight = Number(textFontWeight.value);
+    updateEditorVisual();
+    setToolUI();
+  });
+
+  textSizeSlider.addEventListener("input", () => {
+    state.text.size = Number(textSizeSlider.value);
+    updateEditorVisual();
     setToolUI();
   });
 
@@ -720,6 +863,7 @@ function initEvents() {
       if (state.tool === "eraser") {
         setTool("brush");
       } else {
+        updateEditorVisual();
         setToolUI();
       }
     });

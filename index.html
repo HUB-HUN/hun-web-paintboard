@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hun Paintboard</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/fonts-archive/Pretendard/Pretendard.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/fonts-archive/Paperlogy/Paperlogy.css" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -29,6 +32,9 @@
           </button>
           <button class="tool-button" data-tool="star" type="button" title="별">
             <span class="icon" aria-hidden="true">★</span><span>별</span>
+          </button>
+          <button class="tool-button" data-tool="text" type="button" title="텍스트">
+            <span class="icon" aria-hidden="true">T</span><span>텍스트</span>
           </button>
           <button class="tool-button" data-tool="select" type="button" title="선택/이동">
             <span class="icon" aria-hidden="true">▣</span><span>선택/이동</span>
@@ -57,6 +63,35 @@
             <span>굵기</span>
             <input id="sizeSlider" type="range" min="1" max="64" value="6" />
             <strong id="sizeValue">6px</strong>
+          </label>
+        </section>
+
+        <section class="control-group" aria-label="텍스트 설정">
+          <label class="picker-label">
+            <span>글꼴</span>
+            <select id="textFontFamily">
+              <option value="Pretendard">Pretendard</option>
+              <option value="Paperlogy">Paperlogy</option>
+            </select>
+          </label>
+          <label class="picker-label">
+            <span>두께</span>
+            <select id="textFontWeight">
+              <option value="100">100</option>
+              <option value="200">200</option>
+              <option value="300">300</option>
+              <option value="400" selected>400</option>
+              <option value="500">500</option>
+              <option value="600">600</option>
+              <option value="700">700</option>
+              <option value="800">800</option>
+              <option value="900">900</option>
+            </select>
+          </label>
+          <label class="picker-label">
+            <span>텍스트 크기</span>
+            <input id="textSizeSlider" type="range" min="10" max="160" value="42" />
+            <strong id="textSizeValue">42px</strong>
           </label>
         </section>
 

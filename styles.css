@@ -100,6 +100,15 @@ input {
   font-size: 13px;
 }
 
+#textFontFamily,
+#textFontWeight {
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 3px 8px;
+}
+
 #colorPicker {
   width: 42px;
   height: 30px;
@@ -152,6 +161,7 @@ input {
 }
 
 .canvas-wrap {
+  position: relative;
   min-height: 0;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -166,6 +176,20 @@ input {
   height: 100%;
   touch-action: none;
   background: #fff;
+}
+
+.text-editor {
+  position: absolute;
+  z-index: 20;
+  min-width: 180px;
+  max-width: min(70vw, 560px);
+  border: 1px dashed #2563eb;
+  border-radius: 8px;
+  padding: 6px 9px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #0f172a;
+  outline: none;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
 }
 
 @media (max-width: 860px) {
