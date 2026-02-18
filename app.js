@@ -22,6 +22,9 @@ const swatchButtons = Array.from(document.querySelectorAll(".swatch"));
 
 const TAU = Math.PI * 2;
 const SHAPE_TOOLS = new Set(["line", "rect", "circle", "triangle", "star"]);
+const WHEEL_ZOOM_INTENSITY = 0.008;
+const KEYBOARD_ZOOM_STEP = 1.32;
+const PINCH_ZOOM_SENSITIVITY = 2;
 
 const state = {
   drawing: false,
@@ -275,16 +278,22 @@ function updateTouchGesture() {
   const worldX = (startAnchorX - gesture.startOffsetX) / gesture.startScale;
   const worldY = (startAnchorY - gesture.startOffsetY) / gesture.startScale;
 
+  const distanceRatio = metrics.distance / gesture.startDistance;
+  const adjustedRatio = Math.max(0.1, 1 + (distanceRatio - 1) * PINCH_ZOOM_SENSITIVITY);
   state.view.scale = clampNumber(
-    gesture.startScale * (metrics.distance / gesture.startDistance),
+    gesture.startScale * adjustedRatio,
     state.view.minScale,
     state.view.maxScale,
   );
 
-  const currentAnchorX = metrics.midX - rect.left;
-  const currentAnchorY = metrics.midY - rect.top;
-  state.view.offsetX = currentAnchorX - worldX * state.view.scale;
-  state.view.offsetY = currentAnchorY - worldY * state.view.scale;
+  const panDeltaX = metrics.midX - gesture.startMidClientX;
+  const panDeltaY = metrics.midY - gesture.startMidClientY;
+  const zoomOffsetX = startAnchorX - worldX * state.view.scale - gesture.startOffsetX;
+  const zoomOffsetY = startAnchorY - worldY * state.view.scale - gesture.startOffsetY;
+
+  // Dual gesture: midpoint movement pans, finger distance changes zoom in/out.
+  state.view.offsetX = gesture.startOffsetX + panDeltaX + zoomOffsetX;
+  state.view.offsetY = gesture.startOffsetY + panDeltaY + zoomOffsetY;
   applyViewTransform();
   return true;
 }
@@ -319,8 +328,7 @@ function resetView() {
 function handleWheel(event) {
   event.preventDefault();
   if (event.ctrlKey) {
-    const intensity = 0.004;
-    const factor = Math.exp(-event.deltaY * intensity);
+    const factor = Math.exp(-event.deltaY * WHEEL_ZOOM_INTENSITY);
     zoomAtClientPoint(event.clientX, event.clientY, state.view.scale * factor);
     return;
   }
@@ -1200,11 +1208,11 @@ function handleShortcuts(event) {
   } else if (zoomInPressed) {
     event.preventDefault();
     const rect = canvasWrap.getBoundingClientRect();
-    zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, state.view.scale * 1.15);
+    zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, state.view.scale * KEYBOARD_ZOOM_STEP);
   } else if (zoomOutPressed) {
     event.preventDefault();
     const rect = canvasWrap.getBoundingClientRect();
-    zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, state.view.scale / 1.15);
+    zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, state.view.scale / KEYBOARD_ZOOM_STEP);
   } else if (key === "0") {
     event.preventDefault();
     resetView();
