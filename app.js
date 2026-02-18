@@ -10,7 +10,7 @@ const clearButton = document.getElementById("clearButton");
 const saveButton = document.getElementById("saveButton");
 const copyButton = document.getElementById("copyButton");
 const pasteButton = document.getElementById("pasteButton");
-const statusText = document.getElementById("statusText");
+const toastContainer = document.getElementById("toastContainer");
 const strokeModeButton = document.getElementById("strokeModeButton");
 const fillModeButton = document.getElementById("fillModeButton");
 const textFontFamily = document.getElementById("textFontFamily");
@@ -39,7 +39,20 @@ const state = {
   startX: 0,
   startY: 0,
   previewSnapshot: null,
-  statusTimer: null,
+  view: {
+    scale: 1,
+    minScale: 0.35,
+    maxScale: 4,
+    offsetX: 0,
+    offsetY: 0,
+    panning: false,
+    panPointerId: null,
+    panStartClientX: 0,
+    panStartClientY: 0,
+    panStartOffsetX: 0,
+    panStartOffsetY: 0,
+    spacePressed: false,
+  },
   text: {
     family: textFontFamily.value,
     weight: Number(textFontWeight.value),
@@ -65,15 +78,177 @@ const state = {
 };
 
 function showStatus(message, isError = false) {
-  statusText.textContent = message;
-  statusText.classList.toggle("error", isError);
-  if (state.statusTimer) {
-    clearTimeout(state.statusTimer);
+  if (!toastContainer) return;
+  while (toastContainer.children.length >= 4) {
+    toastContainer.firstElementChild.remove();
   }
-  state.statusTimer = setTimeout(() => {
-    statusText.textContent = "";
-    statusText.classList.remove("error");
-  }, 2200);
+  const toast = document.createElement("div");
+  toast.className = `toast${isError ? " error" : ""}`;
+  toast.textContent = message;
+  toastContainer.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(-6px) scale(0.98)";
+    setTimeout(() => {
+      toast.remove();
+    }, 180);
+  }, 1900);
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function clampViewOffset() {
+  const viewportWidth = canvasWrap.clientWidth;
+  const viewportHeight = canvasWrap.clientHeight;
+  const scaledWidth = canvas.clientWidth * state.view.scale;
+  const scaledHeight = canvas.clientHeight * state.view.scale;
+  const overflowMargin = 120;
+  const centerMargin = 48;
+
+  let minX;
+  let maxX;
+  if (scaledWidth >= viewportWidth) {
+    minX = viewportWidth - scaledWidth - overflowMargin;
+    maxX = overflowMargin;
+  } else {
+    const centerX = (viewportWidth - scaledWidth) / 2;
+    minX = centerX - centerMargin;
+    maxX = centerX + centerMargin;
+  }
+
+  let minY;
+  let maxY;
+  if (scaledHeight >= viewportHeight) {
+    minY = viewportHeight - scaledHeight - overflowMargin;
+    maxY = overflowMargin;
+  } else {
+    const centerY = (viewportHeight - scaledHeight) / 2;
+    minY = centerY - centerMargin;
+    maxY = centerY + centerMargin;
+  }
+
+  state.view.offsetX = clampNumber(state.view.offsetX, minX, maxX);
+  state.view.offsetY = clampNumber(state.view.offsetY, minY, maxY);
+}
+
+function canvasPointToViewport(x, y) {
+  return {
+    x: state.view.offsetX + x * state.view.scale,
+    y: state.view.offsetY + y * state.view.scale,
+  };
+}
+
+function positionTextEditor() {
+  if (!state.text.editorEl) return;
+  const point = canvasPointToViewport(state.text.x, state.text.y);
+  state.text.editorEl.style.left = `${point.x}px`;
+  state.text.editorEl.style.top = `${point.y}px`;
+}
+
+function applyViewTransform() {
+  clampViewOffset();
+  canvas.style.transformOrigin = "0 0";
+  canvas.style.transform = `translate(${state.view.offsetX}px, ${state.view.offsetY}px) scale(${state.view.scale})`;
+  positionTextEditor();
+}
+
+function updateCanvasCursor() {
+  if (state.view.panning) {
+    canvas.style.cursor = "grabbing";
+    return;
+  }
+  if (state.view.spacePressed) {
+    canvas.style.cursor = "grab";
+    return;
+  }
+  if (state.tool === "text") {
+    canvas.style.cursor = "text";
+    return;
+  }
+  if (state.tool === "select") {
+    canvas.style.cursor = "move";
+    return;
+  }
+  canvas.style.cursor = "crosshair";
+}
+
+function shouldStartPan(event) {
+  if (event.pointerType !== "mouse") return false;
+  return event.button === 1 || (event.button === 0 && state.view.spacePressed);
+}
+
+function startPan(event) {
+  state.view.panning = true;
+  state.view.panPointerId = event.pointerId;
+  state.view.panStartClientX = event.clientX;
+  state.view.panStartClientY = event.clientY;
+  state.view.panStartOffsetX = state.view.offsetX;
+  state.view.panStartOffsetY = state.view.offsetY;
+  canvas.setPointerCapture(event.pointerId);
+  updateCanvasCursor();
+}
+
+function stopPan() {
+  if (state.view.panPointerId !== null) {
+    try {
+      if (canvas.hasPointerCapture(state.view.panPointerId)) {
+        canvas.releasePointerCapture(state.view.panPointerId);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  state.view.panning = false;
+  state.view.panPointerId = null;
+  updateCanvasCursor();
+}
+
+function zoomAtClientPoint(clientX, clientY, nextScale) {
+  const rect = canvasWrap.getBoundingClientRect();
+  const anchorX = clientX - rect.left;
+  const anchorY = clientY - rect.top;
+  const previousScale = state.view.scale;
+  const clampedScale = clampNumber(nextScale, state.view.minScale, state.view.maxScale);
+  if (Math.abs(clampedScale - previousScale) < 0.0001) return;
+
+  const worldX = (anchorX - state.view.offsetX) / previousScale;
+  const worldY = (anchorY - state.view.offsetY) / previousScale;
+  state.view.scale = clampedScale;
+  state.view.offsetX = anchorX - worldX * state.view.scale;
+  state.view.offsetY = anchorY - worldY * state.view.scale;
+  applyViewTransform();
+}
+
+function resetView() {
+  state.view.scale = 1;
+  state.view.offsetX = 0;
+  state.view.offsetY = 0;
+  applyViewTransform();
+}
+
+function handleWheel(event) {
+  event.preventDefault();
+  const intensity = event.ctrlKey ? 0.004 : 0.0022;
+  const factor = Math.exp(-event.deltaY * intensity);
+  zoomAtClientPoint(event.clientX, event.clientY, state.view.scale * factor);
+}
+
+function handleKeyDown(event) {
+  if (event.code !== "Space") return;
+  if (getTargetIsTypingElement(event.target)) return;
+  event.preventDefault();
+  if (!state.view.spacePressed) {
+    state.view.spacePressed = true;
+    updateCanvasCursor();
+  }
+}
+
+function handleKeyUp(event) {
+  if (event.code !== "Space") return;
+  state.view.spacePressed = false;
+  updateCanvasCursor();
 }
 
 function getCanvasScale() {
@@ -136,6 +311,7 @@ function updateEditorVisual() {
   state.text.editorEl.style.fontWeight = String(state.text.weight);
   state.text.editorEl.style.fontSize = `${state.text.size}px`;
   state.text.editorEl.style.color = state.color;
+  positionTextEditor();
 }
 
 function closeTextEditor(commit) {
@@ -174,16 +350,14 @@ function openTextEditor(x, y) {
   input.type = "text";
   input.className = "text-editor";
   input.placeholder = "텍스트 입력 후 Enter";
-  input.style.left = `${Math.max(0, Math.min(x, canvas.clientWidth - 32))}px`;
-  input.style.top = `${Math.max(0, Math.min(y, canvas.clientHeight - 32))}px`;
 
   state.text.x = Math.max(0, Math.min(x, canvas.clientWidth - 8));
   state.text.y = Math.max(0, Math.min(y, canvas.clientHeight - state.text.size));
   state.text.editorEl = input;
   state.text.editing = true;
 
-  updateEditorVisual();
   canvasWrap.appendChild(input);
+  updateEditorVisual();
   input.focus();
 
   input.addEventListener("keydown", (event) => {
@@ -258,6 +432,7 @@ function resizeCanvas() {
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   }
+  applyViewTransform();
 }
 
 function setTool(tool) {
@@ -291,6 +466,7 @@ function setToolUI() {
   strokeModeButton.classList.toggle("active", !state.shapeFill);
   fillModeButton.classList.toggle("active", state.shapeFill);
   updateEditorVisual();
+  updateCanvasCursor();
 }
 
 function pushHistory() {
@@ -309,10 +485,12 @@ function pushHistory() {
 }
 
 function getPoint(event) {
-  const rect = canvas.getBoundingClientRect();
+  const rect = canvasWrap.getBoundingClientRect();
+  const rawX = (event.clientX - rect.left - state.view.offsetX) / state.view.scale;
+  const rawY = (event.clientY - rect.top - state.view.offsetY) / state.view.scale;
   return {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
+    x: clampNumber(rawX, 0, canvas.clientWidth),
+    y: clampNumber(rawY, 0, canvas.clientHeight),
   };
 }
 
@@ -469,6 +647,11 @@ function beginSelectionFromRect(rect) {
 }
 
 function beginDraw(event) {
+  if (shouldStartPan(event)) {
+    event.preventDefault();
+    startPan(event);
+    return;
+  }
   if (event.pointerType === "mouse" && event.button !== 0) return;
   event.preventDefault();
   const p = getPoint(event);
@@ -524,6 +707,14 @@ function beginDraw(event) {
 }
 
 function draw(event) {
+  if (state.view.panning) {
+    if (event.pointerId !== state.view.panPointerId) return;
+    event.preventDefault();
+    state.view.offsetX = state.view.panStartOffsetX + (event.clientX - state.view.panStartClientX);
+    state.view.offsetY = state.view.panStartOffsetY + (event.clientY - state.view.panStartClientY);
+    applyViewTransform();
+    return;
+  }
   if (!state.drawing || event.pointerId !== state.pointerId) return;
   event.preventDefault();
   const p = getPoint(event);
@@ -572,6 +763,11 @@ function draw(event) {
 }
 
 function endDraw(event) {
+  if (state.view.panning) {
+    if (event && state.view.panPointerId !== null && event.pointerId !== state.view.panPointerId) return;
+    stopPan();
+    return;
+  }
   if (!state.drawing) return;
   if (event && state.pointerId !== null && event.pointerId !== state.pointerId) return;
 
@@ -796,16 +992,26 @@ function handleShortcuts(event) {
   }
 
   if (!meta) return;
+  if (getTargetIsTypingElement(event.target)) return;
 
   const key = event.key.toLowerCase();
   if (key === "c") {
-    if (getTargetIsTypingElement(event.target)) return;
     event.preventDefault();
     copyCanvasToClipboard();
   } else if (key === "z") {
-    if (getTargetIsTypingElement(event.target)) return;
     event.preventDefault();
     undo();
+  } else if (key === "=" || key === "+") {
+    event.preventDefault();
+    const rect = canvasWrap.getBoundingClientRect();
+    zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, state.view.scale * 1.15);
+  } else if (key === "-") {
+    event.preventDefault();
+    const rect = canvasWrap.getBoundingClientRect();
+    zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, state.view.scale / 1.15);
+  } else if (key === "0") {
+    event.preventDefault();
+    resetView();
   }
 }
 
@@ -815,6 +1021,7 @@ function initEvents() {
   canvas.addEventListener("pointerup", endDraw);
   canvas.addEventListener("pointerleave", endDraw);
   canvas.addEventListener("pointercancel", endDraw);
+  canvasWrap.addEventListener("wheel", handleWheel, { passive: false });
 
   colorPicker.addEventListener("change", () => {
     state.color = colorPicker.value;
@@ -883,7 +1090,16 @@ function initEvents() {
   saveButton.addEventListener("click", savePng);
 
   window.addEventListener("resize", resizeCanvas);
+  window.addEventListener("keydown", handleKeyDown);
   window.addEventListener("keydown", handleShortcuts);
+  window.addEventListener("keyup", handleKeyUp);
+  window.addEventListener("blur", () => {
+    state.view.spacePressed = false;
+    if (state.view.panning) {
+      stopPan();
+    }
+    updateCanvasCursor();
+  });
   window.addEventListener("paste", handlePasteEvent);
 }
 

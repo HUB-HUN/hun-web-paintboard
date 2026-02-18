@@ -12,7 +12,7 @@
   <body>
     <main class="app">
       <header class="toolbar" aria-label="그림판 도구">
-        <h1>Hun Paintboard</h1>
+        <h1 class="logo">웹그림판</h1>
 
         <section class="tool-group" aria-label="그리기 도구">
           <button class="tool-button active" data-tool="brush" type="button" title="브러시">
@@ -122,14 +122,13 @@
           </button>
         </section>
 
-        <p class="shortcut-hint">단축키: Ctrl/Cmd + C 복사 · Ctrl/Cmd + V 붙여넣기 · Ctrl/Cmd + Z 되돌리기 · Shift + 드래그 비율 고정</p>
-        <p id="statusText" class="status" aria-live="polite"></p>
       </header>
 
       <section class="canvas-wrap">
         <canvas id="paintCanvas" aria-label="그림판 캔버스"></canvas>
       </section>
     </main>
+    <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
     <script src="./app.js"></script>
   </body>
 </html>
