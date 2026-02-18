@@ -162,8 +162,9 @@ function canvasPointToViewport(x, y) {
 function positionTextEditor() {
   if (!state.text.editorEl) return;
   const point = canvasPointToViewport(state.text.x, state.text.y);
+  const halfHeight = (state.text.editorEl.offsetHeight || Math.max(24, state.text.size)) / 2;
   state.text.editorEl.style.left = `${point.x}px`;
-  state.text.editorEl.style.top = `${point.y}px`;
+  state.text.editorEl.style.top = `${point.y - halfHeight}px`;
 }
 
 function applyViewTransform() {
@@ -436,7 +437,8 @@ function closeTextEditor(commit) {
   ctx.fillStyle = state.color;
   ctx.font = getTextFontCss();
   ctx.textBaseline = "top";
-  ctx.fillText(text, x, y);
+  const drawY = clampNumber(y - state.text.size / 2, 0, canvas.clientHeight - state.text.size);
+  ctx.fillText(text, x, drawY);
   ctx.restore();
 }
 
