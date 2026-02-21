@@ -341,6 +341,7 @@ function syncLayerTextPanel() {
   const selectedLayerCount = getSelectedLayerIds().length;
   const isTextLayer = Boolean(layer && layer.type === "text" && selectedLayerCount === 1);
   layerTextControls.hidden = !isTextLayer;
+  layerTextControls.style.display = isTextLayer ? "flex" : "none";
 
   if (!isTextLayer) {
     state.panelText.layerId = null;
