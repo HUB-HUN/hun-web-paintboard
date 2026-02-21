@@ -797,13 +797,25 @@ function clampViewOffset() {
 
   let minX;
   let maxX;
-  minX = viewportWidth - scaledWidth - overflowMargin;
-  maxX = overflowMargin;
+  if (scaledWidth <= viewportWidth) {
+    const centeredX = (viewportWidth - scaledWidth) / 2;
+    minX = centeredX;
+    maxX = centeredX;
+  } else {
+    minX = viewportWidth - scaledWidth - overflowMargin;
+    maxX = overflowMargin;
+  }
 
   let minY;
   let maxY;
-  minY = viewportHeight - scaledHeight - overflowMargin;
-  maxY = overflowMargin;
+  if (scaledHeight <= viewportHeight) {
+    const centeredY = (viewportHeight - scaledHeight) / 2;
+    minY = centeredY;
+    maxY = centeredY;
+  } else {
+    minY = viewportHeight - scaledHeight - overflowMargin;
+    maxY = overflowMargin;
+  }
 
   state.view.offsetX = clampNumber(state.view.offsetX, minX, maxX);
   state.view.offsetY = clampNumber(state.view.offsetY, minY, maxY);
@@ -1346,7 +1358,7 @@ function resizeCanvas() {
   }
 
   const fitScale = Math.max(viewportWidth / canvas.clientWidth, viewportHeight / canvas.clientHeight);
-  state.view.minScale = clampNumber(Math.min(1, Math.max(0.2, fitScale * 0.5)), 0.1, state.view.maxScale);
+  state.view.minScale = clampNumber(Math.max(0.2, fitScale), 0.1, state.view.maxScale);
 
   if (!state.view.initialized) {
     state.view.scale = getDefaultViewScale();
