@@ -81,7 +81,7 @@ const state = {
     initialized: false,
   },
   view: {
-    scale: 1.2,
+    scale: 1,
     minScale: 0.55,
     maxScale: 4,
     offsetX: 0,
@@ -810,7 +810,7 @@ function clampViewOffset() {
 }
 
 function getDefaultViewScale() {
-  return clampNumber(Math.max(1.15, state.view.minScale * 1.2), state.view.minScale, state.view.maxScale);
+  return clampNumber(1, state.view.minScale, state.view.maxScale);
 }
 
 function centerViewOn(worldX, worldY) {
@@ -1346,7 +1346,7 @@ function resizeCanvas() {
   }
 
   const fitScale = Math.max(viewportWidth / canvas.clientWidth, viewportHeight / canvas.clientHeight);
-  state.view.minScale = clampNumber(Math.max(0.55, fitScale), 0.2, state.view.maxScale);
+  state.view.minScale = clampNumber(Math.min(1, Math.max(0.2, fitScale * 0.5)), 0.1, state.view.maxScale);
 
   if (!state.view.initialized) {
     state.view.scale = getDefaultViewScale();
@@ -2192,21 +2192,16 @@ async function pasteImageBlob(blob) {
     const image = await loadBlobToImage(blob);
     pushHistory();
 
-    const viewportWorldWidth = canvasWrap.clientWidth / state.view.scale;
-    const viewportWorldHeight = canvasWrap.clientHeight / state.view.scale;
-    const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
-    const sourceWidth = image.width / pixelRatio;
-    const sourceHeight = image.height / pixelRatio;
-    const fitScale = Math.min(1, (viewportWorldWidth * 0.72) / sourceWidth, (viewportWorldHeight * 0.72) / sourceHeight);
-    const drawWidth = Math.max(4, sourceWidth * fitScale);
-    const drawHeight = Math.max(4, sourceHeight * fitScale);
+    // Paste at native size (100%) regardless of current zoom level.
+    const drawWidth = Math.max(1, image.naturalWidth || image.width);
+    const drawHeight = Math.max(1, image.naturalHeight || image.height);
     const viewCenterX = (canvasWrap.clientWidth / 2 - state.view.offsetX) / state.view.scale;
     const viewCenterY = (canvasWrap.clientHeight / 2 - state.view.offsetY) / state.view.scale;
-    const x = clampNumber(viewCenterX - drawWidth / 2, 0, canvas.clientWidth - drawWidth);
-    const y = clampNumber(viewCenterY - drawHeight / 2, 0, canvas.clientHeight - drawHeight);
+    const x = Math.round(viewCenterX - drawWidth / 2);
+    const y = Math.round(viewCenterY - drawHeight / 2);
 
     const rasterLayer = ensureActiveRasterLayer();
-    rasterLayer.ctx.drawImage(image, x - (rasterLayer.x || 0), y - (rasterLayer.y || 0), drawWidth, drawHeight);
+    rasterLayer.ctx.drawImage(image, x - (rasterLayer.x || 0), y - (rasterLayer.y || 0));
     renderComposite();
     showStatus("이미지를 활성 레이어에 붙여넣었습니다.");
   } catch {
