@@ -46,9 +46,10 @@ const state = {
     startPointerY: 0,
     startLayerX: 0,
     startLayerY: 0,
+    historyPushed: false,
   },
   history: [],
-  maxHistory: 20,
+  maxHistory: 10,
   lastX: 0,
   lastY: 0,
   lastShiftKey: false,
@@ -58,9 +59,9 @@ const state = {
   world: {
     width: 0,
     height: 0,
-    minWidth: 2600,
-    minHeight: 1800,
-    scaleFactor: 2.3,
+    minWidth: 1800,
+    minHeight: 1200,
+    scaleFactor: 1.7,
     initialized: false,
   },
   view: {
@@ -110,6 +111,9 @@ const state = {
     baseSnapshot: null,
     offsetX: 0,
     offsetY: 0,
+  },
+  render: {
+    pending: false,
   },
 };
 
@@ -236,7 +240,6 @@ function addRasterLayer() {
   state.layers.push(layer);
   setActiveLayer(layer.id);
   showStatus("새 래스터 레이어를 추가했습니다.");
-  renderComposite();
 }
 
 function deleteActiveLayer() {
@@ -302,11 +305,11 @@ function drawTextLayer(layer) {
   viewCtx.restore();
 }
 
-function renderComposite() {
+function drawCompositeNow() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   viewCtx.save();
-  viewCtx.setTransform(1, 0, 0, 1, 0, 0);
-  viewCtx.clearRect(0, 0, canvas.width, canvas.height);
-  viewCtx.restore();
+  viewCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  viewCtx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   viewCtx.fillStyle = "#ffffff";
   viewCtx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 
@@ -318,6 +321,22 @@ function renderComposite() {
       drawTextLayer(layer);
     }
   }
+  viewCtx.restore();
+}
+
+function renderComposite(immediate = false) {
+  if (immediate) {
+    state.render.pending = false;
+    drawCompositeNow();
+    return;
+  }
+  if (state.render.pending) return;
+  state.render.pending = true;
+  const schedule = typeof window.requestAnimationFrame === "function" ? window.requestAnimationFrame : (cb) => setTimeout(cb, 16);
+  schedule(() => {
+    state.render.pending = false;
+    drawCompositeNow();
+  });
 }
 
 function showStatus(message, isError = false) {
@@ -549,6 +568,7 @@ function resetView() {
 }
 
 function handleWheel(event) {
+  if (isEventFromCanvasOverlayControls(event.target)) return;
   event.preventDefault();
   if (event.ctrlKey) {
     const factor = Math.exp(-event.deltaY * WHEEL_ZOOM_INTENSITY);
@@ -652,7 +672,23 @@ function closeTextEditor(commit) {
   state.text.editing = false;
   state.text.editingLayerId = null;
 
-  if (!commit || text.length === 0) return;
+  if (!commit) return;
+
+  if (text.length === 0) {
+    if (editingLayerId) {
+      const index = state.layers.findIndex((candidate) => candidate.id === editingLayerId);
+      if (index >= 0) {
+        pushHistory();
+        state.layers.splice(index, 1);
+        if (state.layers.length === 0) {
+          const fallback = createRasterLayer("배경 레이어");
+          state.layers.push(fallback);
+        }
+        setActiveLayer(state.layers[Math.max(0, index - 1)].id);
+      }
+    }
+    return;
+  }
 
   pushHistory();
   const existing = editingLayerId ? getLayerById(editingLayerId) : null;
@@ -671,7 +707,6 @@ function closeTextEditor(commit) {
     setActiveLayer(textLayer.id);
   }
   renderLayersList();
-  renderComposite();
 }
 
 function openTextEditor(x, y, editingLayer = null) {
@@ -821,7 +856,7 @@ function resizeCanvas() {
   }
 
   applyViewTransform();
-  renderComposite();
+  renderComposite(true);
 }
 
 function setTool(tool) {
@@ -830,6 +865,8 @@ function setTool(tool) {
   }
   if (state.tool === "select" && tool !== "select") {
     state.layerDrag.active = false;
+    state.layerDrag.pointerId = null;
+    state.layerDrag.historyPushed = false;
   }
   if (state.tool === "select" && tool !== "select" && state.selection.active) {
     commitSelectionToCanvas(true);
@@ -1102,7 +1139,17 @@ function beginSelectionFromRect(rect) {
   renderFloatingSelection();
 }
 
+function isEventFromCanvasOverlayControls(target) {
+  if (!(target instanceof Element)) return false;
+  if (target.closest(".layers-panel")) return true;
+  if (state.text.editorEl && (target === state.text.editorEl || state.text.editorEl.contains(target))) return true;
+  return false;
+}
+
 function beginDraw(event) {
+  if (isEventFromCanvasOverlayControls(event.target)) {
+    return;
+  }
   if (event.pointerType === "touch") {
     event.preventDefault();
     state.view.touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -1134,7 +1181,6 @@ function beginDraw(event) {
       editActiveTextLayer();
       return;
     }
-    pushHistory();
     state.drawing = true;
     state.pointerId = event.pointerId;
     state.layerDrag.active = true;
@@ -1143,6 +1189,7 @@ function beginDraw(event) {
     state.layerDrag.startPointerY = worldPoint.y;
     state.layerDrag.startLayerX = activeLayer.x || 0;
     state.layerDrag.startLayerY = activeLayer.y || 0;
+    state.layerDrag.historyPushed = false;
     canvasWrap.setPointerCapture(event.pointerId);
     return;
   }
@@ -1213,8 +1260,14 @@ function draw(event) {
   if (state.tool === "select" && state.layerDrag.active) {
     const layer = getActiveLayer();
     if (!layer) return;
-    layer.x = state.layerDrag.startLayerX + (worldPoint.x - state.layerDrag.startPointerX);
-    layer.y = state.layerDrag.startLayerY + (worldPoint.y - state.layerDrag.startPointerY);
+    const deltaX = worldPoint.x - state.layerDrag.startPointerX;
+    const deltaY = worldPoint.y - state.layerDrag.startPointerY;
+    if (!state.layerDrag.historyPushed && (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5)) {
+      pushHistory();
+      state.layerDrag.historyPushed = true;
+    }
+    layer.x = state.layerDrag.startLayerX + deltaX;
+    layer.y = state.layerDrag.startLayerY + deltaY;
     renderComposite();
     return;
   }
@@ -1272,6 +1325,7 @@ function endDraw(event) {
   if (state.tool === "select" && state.layerDrag.active) {
     state.layerDrag.active = false;
     state.layerDrag.pointerId = null;
+    state.layerDrag.historyPushed = false;
     renderComposite();
   } else if (SHAPE_TOOLS.has(state.tool) && state.previewSnapshot) {
     const constrained = constrainPoint(
@@ -1340,7 +1394,7 @@ function savePng() {
   if (state.selection.active) {
     renderFloatingSelection();
   }
-  renderComposite();
+  renderComposite(true);
   const link = document.createElement("a");
   link.download = `paint-${Date.now()}.png`;
   link.href = canvas.toDataURL("image/png");
@@ -1360,7 +1414,7 @@ async function copyCanvasToClipboard() {
   }
 
   try {
-    renderComposite();
+    renderComposite(true);
     let sourceCanvas = canvas;
 
     if (state.selection.active && state.selection.layer) {
@@ -1526,6 +1580,14 @@ function initEvents() {
   canvasWrap.addEventListener("pointerleave", endDraw);
   canvasWrap.addEventListener("pointercancel", endDraw);
   canvasWrap.addEventListener("wheel", handleWheel, { passive: false });
+  canvasWrap.addEventListener("dblclick", (event) => {
+    if (isEventFromCanvasOverlayControls(event.target)) return;
+    const activeLayer = getActiveLayer();
+    if (activeLayer && activeLayer.type === "text" && (state.tool === "select" || state.tool === "text")) {
+      event.preventDefault();
+      editActiveTextLayer();
+    }
+  });
 
   colorPicker.addEventListener("change", () => {
     state.color = colorPicker.value;
