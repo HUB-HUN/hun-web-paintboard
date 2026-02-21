@@ -75,9 +75,9 @@ const state = {
   world: {
     width: 0,
     height: 0,
-    minWidth: 1800,
-    minHeight: 1200,
-    scaleFactor: 1.7,
+    minWidth: 7200,
+    minHeight: 4800,
+    scaleFactor: 6.8,
     initialized: false,
   },
   view: {
