@@ -21,6 +21,9 @@ const deleteLayerButton = document.getElementById("deleteLayerButton");
 const layersList = document.getElementById("layersList");
 const layersPanel = document.querySelector(".layers-panel");
 const layersPanelHeader = document.querySelector(".layers-panel-header");
+const layerTextControls = document.getElementById("layerTextControls");
+const layerTextInput = document.getElementById("layerTextInput");
+const applyLayerTextButton = document.getElementById("applyLayerTextButton");
 
 const toolButtons = Array.from(document.querySelectorAll(".tool-button"));
 const swatchButtons = Array.from(document.querySelectorAll(".swatch"));
@@ -133,6 +136,10 @@ const state = {
     startTop: 0,
     manual: false,
   },
+  panelText: {
+    layerId: null,
+    historyPushed: false,
+  },
 };
 
 function getLayerById(layerId) {
@@ -231,6 +238,40 @@ function renderLayersList() {
   });
 }
 
+function syncLayerTextPanel() {
+  if (!layerTextControls || !layerTextInput) return;
+  const layer = getActiveLayer();
+  const isTextLayer = Boolean(layer && layer.type === "text");
+  layerTextControls.hidden = !isTextLayer;
+
+  if (!isTextLayer) {
+    state.panelText.layerId = null;
+    state.panelText.historyPushed = false;
+    layerTextInput.value = "";
+    return;
+  }
+
+  const currentEditing = document.activeElement === layerTextInput;
+  if (!currentEditing || state.panelText.layerId !== layer.id) {
+    layerTextInput.value = layer.text || "";
+  }
+  state.panelText.layerId = layer.id;
+}
+
+function applyLayerTextFromPanel(forceHistory = false) {
+  if (!layerTextInput) return;
+  const layer = getActiveLayer();
+  if (!layer || layer.type !== "text") return;
+  const nextText = layerTextInput.value ?? "";
+  if (layer.text === nextText) return;
+  if (forceHistory || !state.panelText.historyPushed || state.panelText.layerId !== layer.id) {
+    pushHistory({ layerId: layer.id });
+    state.panelText.historyPushed = true;
+  }
+  layer.text = nextText;
+  renderComposite();
+}
+
 function syncTextControlsFromLayer(layer) {
   if (!layer || layer.type !== "text") return;
   state.text.family = layer.fontFamily;
@@ -252,6 +293,7 @@ function setActiveLayer(layerId) {
   state.activeLayerId = layerId;
   syncTextControlsFromLayer(layer);
   renderLayersList();
+  syncLayerTextPanel();
   setToolUI();
   renderComposite();
 }
@@ -283,6 +325,7 @@ function deleteActiveLayer() {
   }
   setToolUI();
   renderLayersList();
+  syncLayerTextPanel();
   renderComposite();
 }
 
@@ -1067,6 +1110,7 @@ function setToolUI() {
     deleteLayerButton.disabled = state.layers.length <= 1;
   }
   updateEditorVisual();
+  syncLayerTextPanel();
   updateCanvasCursor();
 }
 
@@ -1141,6 +1185,16 @@ function getPoint(event) {
   return {
     x: clampNumber(rawX, 0, canvas.clientWidth),
     y: clampNumber(rawY, 0, canvas.clientHeight),
+  };
+}
+
+function getPointUnclamped(event) {
+  const rect = canvas.getBoundingClientRect();
+  const width = rect.width || 1;
+  const height = rect.height || 1;
+  return {
+    x: ((event.clientX - rect.left) / width) * canvas.clientWidth,
+    y: ((event.clientY - rect.top) / height) * canvas.clientHeight,
   };
 }
 
@@ -1506,14 +1560,15 @@ function draw(event) {
   event.preventDefault();
   keepPointInteractive(event);
   const worldPoint = getPoint(event);
+  const worldPointUnclamped = getPointUnclamped(event);
 
   if (state.tool === "select") {
     const layer = getActiveLayer();
     if (!layer) return;
 
     if (layer.type === "text" && state.layerDrag.active) {
-      const deltaX = worldPoint.x - state.layerDrag.startPointerX;
-      const deltaY = worldPoint.y - state.layerDrag.startPointerY;
+      const deltaX = worldPointUnclamped.x - state.layerDrag.startPointerX;
+      const deltaY = worldPointUnclamped.y - state.layerDrag.startPointerY;
       if (!state.layerDrag.historyPushed && (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5)) {
         pushHistory();
         state.layerDrag.historyPushed = true;
@@ -1526,30 +1581,33 @@ function draw(event) {
 
     if (layer.type !== "raster") return;
     const p = toLayerLocal(worldPoint, layer);
+    const pUnclamped = toLayerLocal(worldPointUnclamped, layer);
+    const clampedP = {
+      x: clampNumber(p.x, 0, layer.canvas.width),
+      y: clampNumber(p.y, 0, layer.canvas.height),
+    };
 
     if (state.selection.creating) {
       if (!state.previewSnapshot) return;
       layer.ctx.putImageData(state.previewSnapshot, 0, 0);
-      const rect = normalizeRect(state.startX, state.startY, p.x, p.y);
+      const rect = normalizeRect(state.startX, state.startY, clampedP.x, clampedP.y);
       layer.ctx.save();
       layer.ctx.strokeStyle = "#2563eb";
       layer.ctx.lineWidth = 1;
       layer.ctx.setLineDash([6, 4]);
       layer.ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w, rect.h);
       layer.ctx.restore();
-      state.lastX = p.x;
-      state.lastY = p.y;
+      state.lastX = clampedP.x;
+      state.lastY = clampedP.y;
       renderComposite();
       return;
     }
 
     if (state.selection.dragging && state.selection.layerId === layer.id) {
-      const maxX = layer.canvas.width - state.selection.w;
-      const maxY = layer.canvas.height - state.selection.h;
-      state.selection.x = clampNumber(p.x - state.selection.offsetX, 0, Math.max(0, maxX));
-      state.selection.y = clampNumber(p.y - state.selection.offsetY, 0, Math.max(0, maxY));
-      state.lastX = p.x;
-      state.lastY = p.y;
+      state.selection.x = pUnclamped.x - state.selection.offsetX;
+      state.selection.y = pUnclamped.y - state.selection.offsetY;
+      state.lastX = pUnclamped.x;
+      state.lastY = pUnclamped.y;
       renderFloatingSelection();
       return;
     }
@@ -1557,8 +1615,8 @@ function draw(event) {
     if (state.selection.resizing && state.selection.layerId === layer.id && state.selection.resizeStartRect) {
       const start = state.selection.resizeStartRect;
       const handle = state.selection.resizeHandle || "";
-      const dx = p.x - state.selection.resizeStartX;
-      const dy = p.y - state.selection.resizeStartY;
+      const dx = pUnclamped.x - state.selection.resizeStartX;
+      const dy = pUnclamped.y - state.selection.resizeStartY;
       let left = start.x;
       let right = start.x + start.w;
       let top = start.y;
@@ -1579,17 +1637,12 @@ function draw(event) {
         else bottom = top + minSize;
       }
 
-      left = clampNumber(left, 0, layer.canvas.width - minSize);
-      top = clampNumber(top, 0, layer.canvas.height - minSize);
-      right = clampNumber(right, left + minSize, layer.canvas.width);
-      bottom = clampNumber(bottom, top + minSize, layer.canvas.height);
-
       state.selection.x = left;
       state.selection.y = top;
       state.selection.w = right - left;
       state.selection.h = bottom - top;
-      state.lastX = p.x;
-      state.lastY = p.y;
+      state.lastX = pUnclamped.x;
+      state.lastY = pUnclamped.y;
       renderFloatingSelection();
       return;
     }
@@ -1599,7 +1652,11 @@ function draw(event) {
 
   const layer = getActiveLayer();
   if (!layer || layer.type !== "raster") return;
-  const p = toLayerLocal(worldPoint, layer);
+  const pRaw = toLayerLocal(worldPoint, layer);
+  const p = {
+    x: clampNumber(pRaw.x, 0, layer.canvas.width),
+    y: clampNumber(pRaw.y, 0, layer.canvas.height),
+  };
   const prevX = state.lastX;
   const prevY = state.lastY;
   state.lastShiftKey = event.shiftKey;
@@ -1721,6 +1778,7 @@ function undo() {
     layer.fontWeight = snapshot.fontWeight;
     layer.fontSize = snapshot.fontSize;
   }
+  syncLayerTextPanel();
   renderComposite();
 }
 
@@ -2092,6 +2150,39 @@ function initEvents() {
       }
     });
   }
+  if (layerTextInput) {
+    layerTextInput.addEventListener("focus", () => {
+      state.panelText.historyPushed = false;
+      const layer = getActiveLayer();
+      state.panelText.layerId = layer ? layer.id : null;
+    });
+    layerTextInput.addEventListener("input", () => {
+      applyLayerTextFromPanel(false);
+    });
+    layerTextInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        applyLayerTextFromPanel(true);
+        layerTextInput.blur();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        syncLayerTextPanel();
+        layerTextInput.blur();
+      }
+    });
+    layerTextInput.addEventListener("blur", () => {
+      state.panelText.historyPushed = false;
+      syncLayerTextPanel();
+    });
+  }
+  if (applyLayerTextButton) {
+    applyLayerTextButton.addEventListener("click", () => {
+      applyLayerTextFromPanel(true);
+      if (layerTextInput) {
+        layerTextInput.focus();
+      }
+    });
+  }
 
   window.addEventListener("resize", resizeCanvas);
   window.addEventListener("keydown", handleKeyDown);
@@ -2114,3 +2205,4 @@ function initEvents() {
 resizeCanvas();
 setToolUI();
 initEvents();
+syncLayerTextPanel();

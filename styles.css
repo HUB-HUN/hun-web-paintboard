@@ -278,6 +278,39 @@ input {
   font-size: 11px;
 }
 
+.layer-text-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid rgba(15, 23, 42, 0.14);
+  padding-top: 8px;
+}
+
+.layer-text-controls label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.layer-text-controls input {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #fff;
+}
+
+.layer-text-controls button {
+  align-self: flex-end;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-height: 30px;
+  padding: 5px 10px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
 .text-editor {
   position: absolute;
   z-index: 20;
