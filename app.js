@@ -19,12 +19,15 @@ const textSizeValue = document.getElementById("textSizeValue");
 const addLayerButton = document.getElementById("addLayerButton");
 const deleteLayerButton = document.getElementById("deleteLayerButton");
 const layersList = document.getElementById("layersList");
+const layersPanel = document.querySelector(".layers-panel");
+const layersPanelHeader = document.querySelector(".layers-panel-header");
 
 const toolButtons = Array.from(document.querySelectorAll(".tool-button"));
 const swatchButtons = Array.from(document.querySelectorAll(".swatch"));
 
 const TAU = Math.PI * 2;
 const SHAPE_TOOLS = new Set(["line", "rect", "circle", "triangle", "star"]);
+const SELECTION_HANDLE_RADIUS = 10;
 const WHEEL_ZOOM_INTENSITY = 0.008;
 const KEYBOARD_ZOOM_STEP = 1.32;
 const PINCH_ZOOM_SENSITIVITY = 2;
@@ -103,6 +106,9 @@ const state = {
     active: false,
     creating: false,
     dragging: false,
+    resizing: false,
+    resizeHandle: null,
+    layerId: null,
     x: 0,
     y: 0,
     w: 0,
@@ -111,9 +117,21 @@ const state = {
     baseSnapshot: null,
     offsetX: 0,
     offsetY: 0,
+    resizeStartX: 0,
+    resizeStartY: 0,
+    resizeStartRect: null,
   },
   render: {
     pending: false,
+  },
+  panel: {
+    dragging: false,
+    pointerId: null,
+    startClientX: 0,
+    startClientY: 0,
+    startLeft: 0,
+    startTop: 0,
+    manual: false,
   },
 };
 
@@ -228,6 +246,9 @@ function syncTextControlsFromLayer(layer) {
 function setActiveLayer(layerId) {
   const layer = getLayerById(layerId);
   if (!layer) return;
+  if (state.selection.active && state.selection.layerId && state.selection.layerId !== layerId) {
+    commitSelectionToCanvas(true);
+  }
   state.activeLayerId = layerId;
   syncTextControlsFromLayer(layer);
   renderLayersList();
@@ -337,6 +358,75 @@ function renderComposite(immediate = false) {
     state.render.pending = false;
     drawCompositeNow();
   });
+}
+
+function clampPanelPosition(left, top) {
+  if (!layersPanel) return { left, top };
+  const maxLeft = Math.max(0, canvasWrap.clientWidth - layersPanel.offsetWidth - 8);
+  const maxTop = Math.max(0, canvasWrap.clientHeight - layersPanel.offsetHeight - 8);
+  return {
+    left: clampNumber(left, 8, maxLeft),
+    top: clampNumber(top, 8, maxTop),
+  };
+}
+
+function applyPanelPosition(left, top) {
+  if (!layersPanel) return;
+  const next = clampPanelPosition(left, top);
+  layersPanel.style.left = `${next.left}px`;
+  layersPanel.style.top = `${next.top}px`;
+  layersPanel.style.right = "auto";
+}
+
+function startPanelDrag(event) {
+  if (!layersPanel || !layersPanelHeader) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  if (event.target instanceof Element && event.target.closest("button")) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const wrapRect = canvasWrap.getBoundingClientRect();
+  const panelRect = layersPanel.getBoundingClientRect();
+  state.panel.dragging = true;
+  state.panel.pointerId = event.pointerId;
+  state.panel.startClientX = event.clientX;
+  state.panel.startClientY = event.clientY;
+  state.panel.startLeft = panelRect.left - wrapRect.left;
+  state.panel.startTop = panelRect.top - wrapRect.top;
+  state.panel.manual = true;
+  layersPanelHeader.style.cursor = "grabbing";
+  try {
+    layersPanelHeader.setPointerCapture(event.pointerId);
+  } catch {
+    // ignore
+  }
+}
+
+function movePanelDrag(event) {
+  if (!state.panel.dragging || event.pointerId !== state.panel.pointerId) return;
+  event.preventDefault();
+  const dx = event.clientX - state.panel.startClientX;
+  const dy = event.clientY - state.panel.startClientY;
+  applyPanelPosition(state.panel.startLeft + dx, state.panel.startTop + dy);
+}
+
+function endPanelDrag(event) {
+  if (!state.panel.dragging) return;
+  if (event && event.pointerId !== state.panel.pointerId) return;
+  if (layersPanelHeader && state.panel.pointerId !== null) {
+    try {
+      if (layersPanelHeader.hasPointerCapture(state.panel.pointerId)) {
+        layersPanelHeader.releasePointerCapture(state.panel.pointerId);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  state.panel.dragging = false;
+  state.panel.pointerId = null;
+  if (layersPanelHeader) {
+    layersPanelHeader.style.cursor = "grab";
+  }
 }
 
 function showStatus(message, isError = false) {
@@ -624,10 +714,46 @@ function pointInRect(pointX, pointY, rect) {
   return pointX >= rect.x && pointX <= rect.x + rect.w && pointY >= rect.y && pointY <= rect.y + rect.h;
 }
 
+function getSelectionLayer() {
+  if (!state.selection.layerId) return null;
+  const layer = getLayerById(state.selection.layerId);
+  if (!layer || layer.type !== "raster") return null;
+  return layer;
+}
+
+function getSelectionHandleAtPoint(pointX, pointY) {
+  if (!state.selection.active) return null;
+  const left = state.selection.x;
+  const right = state.selection.x + state.selection.w;
+  const top = state.selection.y;
+  const bottom = state.selection.y + state.selection.h;
+  const r = SELECTION_HANDLE_RADIUS;
+
+  const nearLeft = Math.abs(pointX - left) <= r;
+  const nearRight = Math.abs(pointX - right) <= r;
+  const nearTop = Math.abs(pointY - top) <= r;
+  const nearBottom = Math.abs(pointY - bottom) <= r;
+  const inVertical = pointY >= top - r && pointY <= bottom + r;
+  const inHorizontal = pointX >= left - r && pointX <= right + r;
+
+  if (nearLeft && nearTop) return "nw";
+  if (nearRight && nearTop) return "ne";
+  if (nearLeft && nearBottom) return "sw";
+  if (nearRight && nearBottom) return "se";
+  if (nearLeft && inVertical) return "w";
+  if (nearRight && inVertical) return "e";
+  if (nearTop && inHorizontal) return "n";
+  if (nearBottom && inHorizontal) return "s";
+  return null;
+}
+
 function clearSelectionState() {
   state.selection.active = false;
   state.selection.creating = false;
   state.selection.dragging = false;
+  state.selection.resizing = false;
+  state.selection.resizeHandle = null;
+  state.selection.layerId = null;
   state.selection.x = 0;
   state.selection.y = 0;
   state.selection.w = 0;
@@ -636,6 +762,9 @@ function clearSelectionState() {
   state.selection.baseSnapshot = null;
   state.selection.offsetX = 0;
   state.selection.offsetY = 0;
+  state.selection.resizeStartX = 0;
+  state.selection.resizeStartY = 0;
+  state.selection.resizeStartRect = null;
 }
 
 function getTextFamilyCssName(family) {
@@ -779,20 +908,55 @@ function drawSelectionOutline(x, y, w, h) {
 }
 
 function renderFloatingSelection() {
-  if (!state.selection.active || !state.selection.baseSnapshot || !state.selection.layer) return;
-  ctx.putImageData(state.selection.baseSnapshot, 0, 0);
-  ctx.drawImage(state.selection.layer, state.selection.x, state.selection.y, state.selection.w, state.selection.h);
-  drawSelectionOutline(state.selection.x, state.selection.y, state.selection.w, state.selection.h);
+  const targetLayer = getSelectionLayer();
+  if (!targetLayer || !state.selection.active || !state.selection.baseSnapshot || !state.selection.layer) return;
+  targetLayer.ctx.putImageData(state.selection.baseSnapshot, 0, 0);
+  targetLayer.ctx.drawImage(state.selection.layer, state.selection.x, state.selection.y, state.selection.w, state.selection.h);
+  const left = state.selection.x;
+  const right = state.selection.x + state.selection.w;
+  const top = state.selection.y;
+  const bottom = state.selection.y + state.selection.h;
+  const centerX = left + state.selection.w / 2;
+  const centerY = top + state.selection.h / 2;
+  targetLayer.ctx.save();
+  targetLayer.ctx.strokeStyle = "#2563eb";
+  targetLayer.ctx.lineWidth = 1;
+  targetLayer.ctx.setLineDash([6, 4]);
+  targetLayer.ctx.strokeRect(state.selection.x + 0.5, state.selection.y + 0.5, state.selection.w, state.selection.h);
+  targetLayer.ctx.setLineDash([]);
+  targetLayer.ctx.fillStyle = "#2563eb";
+  const handleRadius = 3;
+  const handles = [
+    [left, top],
+    [right, top],
+    [left, bottom],
+    [right, bottom],
+    [centerX, top],
+    [centerX, bottom],
+    [left, centerY],
+    [right, centerY],
+  ];
+  for (const [hx, hy] of handles) {
+    targetLayer.ctx.beginPath();
+    targetLayer.ctx.arc(hx, hy, handleRadius, 0, TAU);
+    targetLayer.ctx.fill();
+  }
+  targetLayer.ctx.fillStyle = "rgba(37, 99, 235, 0.78)";
+  targetLayer.ctx.beginPath();
+  targetLayer.ctx.arc(centerX, centerY, 4, 0, TAU);
+  targetLayer.ctx.fill();
+  targetLayer.ctx.restore();
   renderComposite();
 }
 
 function commitSelectionToCanvas(clearAfter = true) {
-  if (!state.selection.active || !state.selection.baseSnapshot || !state.selection.layer) {
+  const targetLayer = getSelectionLayer();
+  if (!targetLayer || !state.selection.active || !state.selection.baseSnapshot || !state.selection.layer) {
     if (clearAfter) clearSelectionState();
     return;
   }
-  ctx.putImageData(state.selection.baseSnapshot, 0, 0);
-  ctx.drawImage(state.selection.layer, state.selection.x, state.selection.y, state.selection.w, state.selection.h);
+  targetLayer.ctx.putImageData(state.selection.baseSnapshot, 0, 0);
+  targetLayer.ctx.drawImage(state.selection.layer, state.selection.x, state.selection.y, state.selection.w, state.selection.h);
   if (clearAfter) {
     clearSelectionState();
   }
@@ -856,6 +1020,13 @@ function resizeCanvas() {
   }
 
   applyViewTransform();
+  if (state.panel.manual && layersPanel) {
+    const left = Number.parseFloat(layersPanel.style.left);
+    const top = Number.parseFloat(layersPanel.style.top);
+    if (Number.isFinite(left) && Number.isFinite(top)) {
+      applyPanelPosition(left, top);
+    }
+  }
   renderComposite(true);
 }
 
@@ -899,21 +1070,45 @@ function setToolUI() {
   updateCanvasCursor();
 }
 
-function pushHistory() {
-  if (state.selection.active) {
+function captureRasterImageData(layer, includeSelection = false) {
+  if (!layer || layer.type !== "raster" || !layer.canvas || !layer.ctx) return null;
+  if (
+    !includeSelection ||
+    !state.selection.active ||
+    state.selection.layerId !== layer.id ||
+    !state.selection.baseSnapshot ||
+    !state.selection.layer
+  ) {
+    return layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height);
+  }
+  const tempCanvas = document.createElement("canvas");
+  tempCanvas.width = layer.canvas.width;
+  tempCanvas.height = layer.canvas.height;
+  const tempCtx = tempCanvas.getContext("2d", { willReadFrequently: true });
+  tempCtx.putImageData(state.selection.baseSnapshot, 0, 0);
+  tempCtx.drawImage(state.selection.layer, state.selection.x, state.selection.y, state.selection.w, state.selection.h);
+  return tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+}
+
+function pushHistory(options = {}) {
+  const preserveSelection = Boolean(options.preserveSelection);
+  const targetLayerId = Number.isFinite(options.layerId) ? options.layerId : null;
+  if (state.selection.active && !preserveSelection) {
     commitSelectionToCanvas(true);
   }
-  const layer = getActiveLayer();
+  const layer = targetLayerId !== null ? getLayerById(targetLayerId) : getActiveLayer();
   if (!layer) return;
   try {
     let snapshot;
     if (layer.type === "raster") {
+      const imageData = captureRasterImageData(layer, preserveSelection);
+      if (!imageData) return;
       snapshot = {
         kind: "raster",
         layerId: layer.id,
         x: layer.x,
         y: layer.y,
-        imageData: layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height),
+        imageData,
       };
     } else {
       snapshot = {
@@ -1103,13 +1298,12 @@ function drawShape(tool, x1, y1, x2, y2) {
   }
 }
 
-function createSelectionLayer(rect) {
-  const scale = getCanvasScale();
-  const sx = Math.round(rect.x * scale);
-  const sy = Math.round(rect.y * scale);
-  const sw = Math.max(1, Math.round(rect.w * scale));
-  const sh = Math.max(1, Math.round(rect.h * scale));
-  const imageData = ctx.getImageData(sx, sy, sw, sh);
+function createSelectionLayer(targetLayer, rect) {
+  const sx = Math.round(rect.x);
+  const sy = Math.round(rect.y);
+  const sw = Math.max(1, Math.round(rect.w));
+  const sh = Math.max(1, Math.round(rect.h));
+  const imageData = targetLayer.ctx.getImageData(sx, sy, sw, sh);
   const layer = document.createElement("canvas");
   layer.width = sw;
   layer.height = sh;
@@ -1117,24 +1311,27 @@ function createSelectionLayer(rect) {
   return layer;
 }
 
-function beginSelectionFromRect(rect) {
-  const layer = createSelectionLayer(rect);
-  ctx.clearRect(rect.x, rect.y, rect.w, rect.h);
+function beginSelectionFromRect(targetLayer, rect) {
+  const layer = createSelectionLayer(targetLayer, rect);
+  targetLayer.ctx.clearRect(rect.x, rect.y, rect.w, rect.h);
 
   state.selection.active = true;
   state.selection.creating = false;
   state.selection.dragging = false;
+  state.selection.resizing = false;
+  state.selection.resizeHandle = null;
+  state.selection.layerId = targetLayer.id;
   state.selection.x = rect.x;
   state.selection.y = rect.y;
   state.selection.w = rect.w;
   state.selection.h = rect.h;
   state.selection.layer = layer;
-  const active = getActiveLayer();
-  const snapshotWidth = active && active.type === "raster" ? active.canvas.width : canvas.clientWidth;
-  const snapshotHeight = active && active.type === "raster" ? active.canvas.height : canvas.clientHeight;
-  state.selection.baseSnapshot = ctx.getImageData(0, 0, snapshotWidth, snapshotHeight);
+  state.selection.baseSnapshot = targetLayer.ctx.getImageData(0, 0, targetLayer.canvas.width, targetLayer.canvas.height);
   state.selection.offsetX = 0;
   state.selection.offsetY = 0;
+  state.selection.resizeStartX = 0;
+  state.selection.resizeStartY = 0;
+  state.selection.resizeStartRect = null;
 
   renderFloatingSelection();
 }
@@ -1183,14 +1380,67 @@ function beginDraw(event) {
     }
     state.drawing = true;
     state.pointerId = event.pointerId;
-    state.layerDrag.active = true;
-    state.layerDrag.pointerId = event.pointerId;
-    state.layerDrag.startPointerX = worldPoint.x;
-    state.layerDrag.startPointerY = worldPoint.y;
-    state.layerDrag.startLayerX = activeLayer.x || 0;
-    state.layerDrag.startLayerY = activeLayer.y || 0;
-    state.layerDrag.historyPushed = false;
     canvasWrap.setPointerCapture(event.pointerId);
+
+    if (activeLayer.type === "text") {
+      state.layerDrag.active = true;
+      state.layerDrag.pointerId = event.pointerId;
+      state.layerDrag.startPointerX = worldPoint.x;
+      state.layerDrag.startPointerY = worldPoint.y;
+      state.layerDrag.startLayerX = activeLayer.x || 0;
+      state.layerDrag.startLayerY = activeLayer.y || 0;
+      state.layerDrag.historyPushed = false;
+      return;
+    }
+
+    const p = toLayerLocal(worldPoint, activeLayer);
+    state.startX = p.x;
+    state.startY = p.y;
+    state.lastX = p.x;
+    state.lastY = p.y;
+
+    if (state.selection.active && state.selection.layerId !== activeLayer.id) {
+      commitSelectionToCanvas(true);
+    }
+
+    if (state.selection.active && state.selection.layerId === activeLayer.id) {
+      const handle = getSelectionHandleAtPoint(p.x, p.y);
+      if (handle) {
+        pushHistory({ preserveSelection: true, layerId: activeLayer.id });
+        state.selection.resizing = true;
+        state.selection.resizeHandle = handle;
+        state.selection.resizeStartX = p.x;
+        state.selection.resizeStartY = p.y;
+        state.selection.resizeStartRect = {
+          x: state.selection.x,
+          y: state.selection.y,
+          w: state.selection.w,
+          h: state.selection.h,
+        };
+        return;
+      }
+
+      const centerInset = Math.min(SELECTION_HANDLE_RADIUS, Math.max(2, Math.min(state.selection.w, state.selection.h) / 3));
+      const centerRect = {
+        x: state.selection.x + centerInset,
+        y: state.selection.y + centerInset,
+        w: Math.max(0, state.selection.w - centerInset * 2),
+        h: Math.max(0, state.selection.h - centerInset * 2),
+      };
+      const canDragSelection = pointInRect(p.x, p.y, centerRect) || (centerRect.w < 1 && centerRect.h < 1 && pointInRect(p.x, p.y, state.selection));
+      if (canDragSelection) {
+        pushHistory({ preserveSelection: true, layerId: activeLayer.id });
+        state.selection.dragging = true;
+        state.selection.offsetX = p.x - state.selection.x;
+        state.selection.offsetY = p.y - state.selection.y;
+        return;
+      }
+
+      commitSelectionToCanvas(true);
+    }
+
+    state.selection.creating = true;
+    state.previewSnapshot = activeLayer.ctx.getImageData(0, 0, activeLayer.canvas.width, activeLayer.canvas.height);
     return;
   }
 
@@ -1257,18 +1507,93 @@ function draw(event) {
   keepPointInteractive(event);
   const worldPoint = getPoint(event);
 
-  if (state.tool === "select" && state.layerDrag.active) {
+  if (state.tool === "select") {
     const layer = getActiveLayer();
     if (!layer) return;
-    const deltaX = worldPoint.x - state.layerDrag.startPointerX;
-    const deltaY = worldPoint.y - state.layerDrag.startPointerY;
-    if (!state.layerDrag.historyPushed && (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5)) {
-      pushHistory();
-      state.layerDrag.historyPushed = true;
+
+    if (layer.type === "text" && state.layerDrag.active) {
+      const deltaX = worldPoint.x - state.layerDrag.startPointerX;
+      const deltaY = worldPoint.y - state.layerDrag.startPointerY;
+      if (!state.layerDrag.historyPushed && (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5)) {
+        pushHistory();
+        state.layerDrag.historyPushed = true;
+      }
+      layer.x = state.layerDrag.startLayerX + deltaX;
+      layer.y = state.layerDrag.startLayerY + deltaY;
+      renderComposite();
+      return;
     }
-    layer.x = state.layerDrag.startLayerX + deltaX;
-    layer.y = state.layerDrag.startLayerY + deltaY;
-    renderComposite();
+
+    if (layer.type !== "raster") return;
+    const p = toLayerLocal(worldPoint, layer);
+
+    if (state.selection.creating) {
+      if (!state.previewSnapshot) return;
+      layer.ctx.putImageData(state.previewSnapshot, 0, 0);
+      const rect = normalizeRect(state.startX, state.startY, p.x, p.y);
+      layer.ctx.save();
+      layer.ctx.strokeStyle = "#2563eb";
+      layer.ctx.lineWidth = 1;
+      layer.ctx.setLineDash([6, 4]);
+      layer.ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w, rect.h);
+      layer.ctx.restore();
+      state.lastX = p.x;
+      state.lastY = p.y;
+      renderComposite();
+      return;
+    }
+
+    if (state.selection.dragging && state.selection.layerId === layer.id) {
+      const maxX = layer.canvas.width - state.selection.w;
+      const maxY = layer.canvas.height - state.selection.h;
+      state.selection.x = clampNumber(p.x - state.selection.offsetX, 0, Math.max(0, maxX));
+      state.selection.y = clampNumber(p.y - state.selection.offsetY, 0, Math.max(0, maxY));
+      state.lastX = p.x;
+      state.lastY = p.y;
+      renderFloatingSelection();
+      return;
+    }
+
+    if (state.selection.resizing && state.selection.layerId === layer.id && state.selection.resizeStartRect) {
+      const start = state.selection.resizeStartRect;
+      const handle = state.selection.resizeHandle || "";
+      const dx = p.x - state.selection.resizeStartX;
+      const dy = p.y - state.selection.resizeStartY;
+      let left = start.x;
+      let right = start.x + start.w;
+      let top = start.y;
+      let bottom = start.y + start.h;
+
+      if (handle.includes("w")) left += dx;
+      if (handle.includes("e")) right += dx;
+      if (handle.includes("n")) top += dy;
+      if (handle.includes("s")) bottom += dy;
+
+      const minSize = 2;
+      if (right - left < minSize) {
+        if (handle.includes("w")) left = right - minSize;
+        else right = left + minSize;
+      }
+      if (bottom - top < minSize) {
+        if (handle.includes("n")) top = bottom - minSize;
+        else bottom = top + minSize;
+      }
+
+      left = clampNumber(left, 0, layer.canvas.width - minSize);
+      top = clampNumber(top, 0, layer.canvas.height - minSize);
+      right = clampNumber(right, left + minSize, layer.canvas.width);
+      bottom = clampNumber(bottom, top + minSize, layer.canvas.height);
+
+      state.selection.x = left;
+      state.selection.y = top;
+      state.selection.w = right - left;
+      state.selection.h = bottom - top;
+      state.lastX = p.x;
+      state.lastY = p.y;
+      renderFloatingSelection();
+      return;
+    }
+
     return;
   }
 
@@ -1322,11 +1647,33 @@ function endDraw(event) {
   if (!state.drawing) return;
   if (event && state.pointerId !== null && event.pointerId !== state.pointerId) return;
 
-  if (state.tool === "select" && state.layerDrag.active) {
-    state.layerDrag.active = false;
-    state.layerDrag.pointerId = null;
-    state.layerDrag.historyPushed = false;
-    renderComposite();
+  if (state.tool === "select") {
+    const activeLayer = getActiveLayer();
+    if (activeLayer && activeLayer.type === "text" && state.layerDrag.active) {
+      state.layerDrag.active = false;
+      state.layerDrag.pointerId = null;
+      state.layerDrag.historyPushed = false;
+      renderComposite();
+    } else if (activeLayer && activeLayer.type === "raster") {
+      if (state.selection.creating && state.previewSnapshot) {
+        activeLayer.ctx.putImageData(state.previewSnapshot, 0, 0);
+        const endX = Number.isFinite(state.lastX) ? state.lastX : state.startX;
+        const endY = Number.isFinite(state.lastY) ? state.lastY : state.startY;
+        const rect = normalizeRect(state.startX, state.startY, endX, endY);
+        if (rect.w >= 3 && rect.h >= 3) {
+          pushHistory();
+          beginSelectionFromRect(activeLayer, rect);
+        } else {
+          renderComposite();
+        }
+      } else if (state.selection.dragging || state.selection.resizing) {
+        state.selection.dragging = false;
+        state.selection.resizing = false;
+        state.selection.resizeHandle = null;
+        state.selection.resizeStartRect = null;
+        renderFloatingSelection();
+      }
+    }
   } else if (SHAPE_TOOLS.has(state.tool) && state.previewSnapshot) {
     const constrained = constrainPoint(
       state.tool,
@@ -1486,10 +1833,18 @@ async function pasteImageBlob(blob) {
     const image = await loadBlobToImage(blob);
     pushHistory();
 
-    const drawWidth = image.width;
-    const drawHeight = image.height;
-    const x = (canvas.clientWidth - drawWidth) / 2;
-    const y = (canvas.clientHeight - drawHeight) / 2;
+    const viewportWorldWidth = canvasWrap.clientWidth / state.view.scale;
+    const viewportWorldHeight = canvasWrap.clientHeight / state.view.scale;
+    const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+    const sourceWidth = image.width / pixelRatio;
+    const sourceHeight = image.height / pixelRatio;
+    const fitScale = Math.min(1, (viewportWorldWidth * 0.72) / sourceWidth, (viewportWorldHeight * 0.72) / sourceHeight);
+    const drawWidth = Math.max(4, sourceWidth * fitScale);
+    const drawHeight = Math.max(4, sourceHeight * fitScale);
+    const viewCenterX = (canvasWrap.clientWidth / 2 - state.view.offsetX) / state.view.scale;
+    const viewCenterY = (canvasWrap.clientHeight / 2 - state.view.offsetY) / state.view.scale;
+    const x = clampNumber(viewCenterX - drawWidth / 2, 0, canvas.clientWidth - drawWidth);
+    const y = clampNumber(viewCenterY - drawHeight / 2, 0, canvas.clientHeight - drawHeight);
 
     const rasterLayer = ensureActiveRasterLayer();
     rasterLayer.ctx.drawImage(image, x - (rasterLayer.x || 0), y - (rasterLayer.y || 0), drawWidth, drawHeight);
@@ -1580,6 +1935,16 @@ function initEvents() {
   canvasWrap.addEventListener("pointerleave", endDraw);
   canvasWrap.addEventListener("pointercancel", endDraw);
   canvasWrap.addEventListener("wheel", handleWheel, { passive: false });
+  if (layersPanelHeader) {
+    layersPanelHeader.addEventListener("pointerdown", startPanelDrag, { passive: false });
+    layersPanelHeader.addEventListener("pointermove", movePanelDrag, { passive: false });
+    layersPanelHeader.addEventListener("pointerup", endPanelDrag);
+    layersPanelHeader.addEventListener("pointercancel", endPanelDrag);
+    layersPanelHeader.addEventListener("lostpointercapture", endPanelDrag);
+  }
+  window.addEventListener("pointermove", movePanelDrag, { passive: false });
+  window.addEventListener("pointerup", endPanelDrag);
+  window.addEventListener("pointercancel", endPanelDrag);
   canvasWrap.addEventListener("dblclick", (event) => {
     if (isEventFromCanvasOverlayControls(event.target)) return;
     const activeLayer = getActiveLayer();
