@@ -75,9 +75,9 @@ const state = {
   world: {
     width: 0,
     height: 0,
-    minWidth: 7200,
-    minHeight: 4800,
-    scaleFactor: 6.8,
+    minWidth: 3600,
+    minHeight: 2400,
+    scaleFactor: 3.4,
     initialized: false,
   },
   view: {
@@ -664,7 +664,7 @@ function mergeSelectedLayers() {
 }
 
 function drawCompositeNow() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = getViewDpr();
   viewCtx.save();
   viewCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
   viewCtx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
@@ -819,6 +819,15 @@ function clampViewOffset() {
 
   state.view.offsetX = clampNumber(state.view.offsetX, minX, maxX);
   state.view.offsetY = clampNumber(state.view.offsetY, minY, maxY);
+}
+
+function getViewDpr() {
+  const nativeDpr = Math.min(window.devicePixelRatio || 1, 2);
+  const worldWidth = state.world.width || canvas.clientWidth || 1;
+  const worldHeight = state.world.height || canvas.clientHeight || 1;
+  const estimatedPixels = worldWidth * worldHeight * nativeDpr * nativeDpr;
+  if (estimatedPixels > 20000000) return 1;
+  return nativeDpr;
 }
 
 function getDefaultViewScale() {
@@ -1327,7 +1336,6 @@ function resizeCanvas() {
   const previousCenterX = (viewportWidth / 2 - state.view.offsetX) / prevScale;
   const previousCenterY = (viewportHeight / 2 - state.view.offsetY) / prevScale;
 
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   if (!state.world.initialized) {
     state.world.width = Math.max(Math.round(viewportWidth * state.world.scaleFactor), state.world.minWidth);
     state.world.height = Math.max(Math.round(viewportHeight * state.world.scaleFactor), state.world.minHeight);
@@ -1336,6 +1344,8 @@ function resizeCanvas() {
     state.world.width = Math.max(state.world.width, Math.round(viewportWidth * 1.35));
     state.world.height = Math.max(state.world.height, Math.round(viewportHeight * 1.35));
   }
+  state.maxHistory = state.world.width * state.world.height > 12000000 ? 5 : 10;
+  const dpr = getViewDpr();
 
   canvas.style.width = `${state.world.width}px`;
   canvas.style.height = `${state.world.height}px`;
