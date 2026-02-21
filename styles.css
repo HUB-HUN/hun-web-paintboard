@@ -261,6 +261,12 @@ input {
   box-shadow: 0 0 0 1px #0f172a inset;
 }
 
+.layer-item.selected:not(.active) {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 1px #93c5fd inset;
+  background: #eff6ff;
+}
+
 .layer-item .layer-meta {
   display: inline-flex;
   flex-direction: column;

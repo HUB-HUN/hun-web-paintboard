@@ -17,6 +17,7 @@ const textWeightValue = document.getElementById("textWeightValue");
 const textSizeSlider = document.getElementById("textSizeSlider");
 const textSizeValue = document.getElementById("textSizeValue");
 const addLayerButton = document.getElementById("addLayerButton");
+const mergeLayersButton = document.getElementById("mergeLayersButton");
 const deleteLayerButton = document.getElementById("deleteLayerButton");
 const layersList = document.getElementById("layersList");
 const layersPanel = document.querySelector(".layers-panel");
@@ -45,6 +46,10 @@ const state = {
   layers: [],
   nextLayerId: 1,
   activeLayerId: null,
+  layerSelection: {
+    selectedIds: new Set(),
+    anchorId: null,
+  },
   layerDrag: {
     active: false,
     pointerId: null,
@@ -150,6 +155,96 @@ function getActiveLayer() {
   return getLayerById(state.activeLayerId);
 }
 
+function getLayerDisplayOrderIds() {
+  return [...state.layers].reverse().map((layer) => layer.id);
+}
+
+function getSelectedLayerIds() {
+  const validIds = [];
+  for (const layerId of state.layerSelection.selectedIds) {
+    if (getLayerById(layerId)) {
+      validIds.push(layerId);
+    }
+  }
+  if (state.activeLayerId && getLayerById(state.activeLayerId) && !validIds.includes(state.activeLayerId)) {
+    validIds.push(state.activeLayerId);
+  }
+  return validIds;
+}
+
+function applyLayerSelection(selectedIds, activeLayerId, anchorId = activeLayerId) {
+  const selectedSet = new Set();
+  for (const layerId of selectedIds) {
+    if (getLayerById(layerId)) {
+      selectedSet.add(layerId);
+    }
+  }
+
+  let nextActiveId = activeLayerId;
+  if (!nextActiveId || !getLayerById(nextActiveId)) {
+    nextActiveId = selectedSet.size > 0 ? [...selectedSet][0] : state.layers[0]?.id ?? null;
+  }
+  if (!nextActiveId || !getLayerById(nextActiveId)) return;
+
+  if (!selectedSet.has(nextActiveId)) {
+    selectedSet.add(nextActiveId);
+  }
+
+  if (state.selection.active && state.selection.layerId && state.selection.layerId !== nextActiveId) {
+    commitSelectionToCanvas(true);
+  }
+
+  state.activeLayerId = nextActiveId;
+  state.layerSelection.selectedIds = selectedSet;
+  state.layerSelection.anchorId = getLayerById(anchorId) ? anchorId : nextActiveId;
+
+  const layer = getLayerById(nextActiveId);
+  syncTextControlsFromLayer(layer);
+  renderLayersList();
+  syncLayerTextPanel();
+  setToolUI();
+  renderComposite();
+}
+
+function handleLayerRowClick(layerId, event) {
+  const layer = getLayerById(layerId);
+  if (!layer) return;
+
+  const isToggleMulti = event.ctrlKey || event.metaKey;
+  const isRangeMulti = event.shiftKey;
+  const currentSelected = new Set(getSelectedLayerIds());
+  const displayIds = getLayerDisplayOrderIds();
+
+  if (isRangeMulti) {
+    const fallbackAnchor = state.activeLayerId || layerId;
+    const anchorId = getLayerById(state.layerSelection.anchorId) ? state.layerSelection.anchorId : fallbackAnchor;
+    const anchorIndex = displayIds.indexOf(anchorId);
+    const targetIndex = displayIds.indexOf(layerId);
+    if (anchorIndex < 0 || targetIndex < 0) {
+      applyLayerSelection([layerId], layerId, layerId);
+      return;
+    }
+    const rangeIds = displayIds.slice(Math.min(anchorIndex, targetIndex), Math.max(anchorIndex, targetIndex) + 1);
+    const nextSet = isToggleMulti ? new Set([...currentSelected, ...rangeIds]) : new Set(rangeIds);
+    applyLayerSelection(nextSet, layerId, anchorId);
+    return;
+  }
+
+  if (isToggleMulti) {
+    if (currentSelected.has(layerId) && currentSelected.size > 1) {
+      currentSelected.delete(layerId);
+      const fallbackActive = layerId === state.activeLayerId ? [...currentSelected][0] : state.activeLayerId;
+      applyLayerSelection(currentSelected, fallbackActive, layerId);
+      return;
+    }
+    currentSelected.add(layerId);
+    applyLayerSelection(currentSelected, layerId, layerId);
+    return;
+  }
+
+  applyLayerSelection([layerId], layerId, layerId);
+}
+
 function getLayerTypeLabel(layer) {
   if (!layer) return "";
   return layer.type === "text" ? "텍스트" : "래스터";
@@ -217,12 +312,15 @@ function createTextLayer(text, x, y) {
 function renderLayersList() {
   if (!layersList) return;
   layersList.innerHTML = "";
+  const selectedIds = new Set(getSelectedLayerIds());
 
   const sortedLayers = [...state.layers].reverse();
   sortedLayers.forEach((layer) => {
     const row = document.createElement("button");
     row.type = "button";
-    row.className = `layer-item${layer.id === state.activeLayerId ? " active" : ""}`;
+    const isActive = layer.id === state.activeLayerId;
+    const isSelected = selectedIds.has(layer.id);
+    row.className = `layer-item${isActive ? " active" : ""}${isSelected ? " selected" : ""}`;
     row.dataset.layerId = String(layer.id);
     row.innerHTML = `
       <span class="layer-meta">
@@ -231,8 +329,8 @@ function renderLayersList() {
       </span>
       <span>${layer.visible ? "◉" : "○"}</span>
     `;
-    row.addEventListener("click", () => {
-      setActiveLayer(layer.id);
+    row.addEventListener("click", (event) => {
+      handleLayerRowClick(layer.id, event);
     });
     layersList.appendChild(row);
   });
@@ -285,17 +383,7 @@ function syncTextControlsFromLayer(layer) {
 }
 
 function setActiveLayer(layerId) {
-  const layer = getLayerById(layerId);
-  if (!layer) return;
-  if (state.selection.active && state.selection.layerId && state.selection.layerId !== layerId) {
-    commitSelectionToCanvas(true);
-  }
-  state.activeLayerId = layerId;
-  syncTextControlsFromLayer(layer);
-  renderLayersList();
-  syncLayerTextPanel();
-  setToolUI();
-  renderComposite();
+  applyLayerSelection([layerId], layerId, layerId);
 }
 
 function addRasterLayer() {
@@ -319,14 +407,8 @@ function deleteActiveLayer() {
   if (index < 0) return;
   state.layers.splice(index, 1);
   const nextLayer = state.layers[Math.max(0, index - 1)] || state.layers[0];
-  state.activeLayerId = nextLayer ? nextLayer.id : null;
-  if (nextLayer) {
-    syncTextControlsFromLayer(nextLayer);
-  }
-  setToolUI();
-  renderLayersList();
-  syncLayerTextPanel();
-  renderComposite();
+  if (!nextLayer) return;
+  setActiveLayer(nextLayer.id);
 }
 
 function ensureActiveRasterLayer() {
@@ -357,16 +439,64 @@ function resizeRasterLayers() {
   });
 }
 
-function drawTextLayer(layer) {
+function drawTextLayer(layer, targetCtx = viewCtx) {
   if (!layer || layer.type !== "text" || !layer.visible || !layer.text) return;
-  viewCtx.save();
-  viewCtx.globalCompositeOperation = "source-over";
-  viewCtx.fillStyle = layer.color;
-  viewCtx.font = `${layer.fontWeight} ${layer.fontSize}px ${getTextFamilyCssName(layer.fontFamily)}`;
-  viewCtx.textBaseline = "top";
+  targetCtx.save();
+  targetCtx.globalCompositeOperation = "source-over";
+  targetCtx.fillStyle = layer.color;
+  targetCtx.font = `${layer.fontWeight} ${layer.fontSize}px ${getTextFamilyCssName(layer.fontFamily)}`;
+  targetCtx.textBaseline = "top";
   const drawY = layer.y - layer.fontSize / 2;
-  viewCtx.fillText(layer.text, layer.x, drawY);
-  viewCtx.restore();
+  targetCtx.fillText(layer.text, layer.x, drawY);
+  targetCtx.restore();
+}
+
+function mergeSelectedLayers() {
+  if (state.text.editing) {
+    closeTextEditor(true);
+  }
+  if (state.selection.active) {
+    commitSelectionToCanvas(true);
+  }
+
+  const selectedIds = getSelectedLayerIds();
+  if (selectedIds.length < 2) {
+    showStatus("병합할 레이어를 2개 이상 선택해 주세요.", true);
+    return;
+  }
+
+  const selectedSet = new Set(selectedIds);
+  const selectedEntries = state.layers
+    .map((layer, index) => ({ layer, index }))
+    .filter((entry) => selectedSet.has(entry.layer.id))
+    .sort((a, b) => a.index - b.index);
+
+  if (selectedEntries.length < 2) {
+    showStatus("병합할 레이어를 2개 이상 선택해 주세요.", true);
+    return;
+  }
+
+  const mergedLayer = createRasterLayer(`병합 레이어 ${state.nextLayerId}`);
+  mergedLayer.ctx.clearRect(0, 0, mergedLayer.canvas.width, mergedLayer.canvas.height);
+
+  for (const entry of selectedEntries) {
+    const layer = entry.layer;
+    if (!layer.visible) continue;
+    if (layer.type === "raster" && layer.canvas) {
+      mergedLayer.ctx.drawImage(layer.canvas, layer.x || 0, layer.y || 0);
+    } else if (layer.type === "text") {
+      drawTextLayer(layer, mergedLayer.ctx);
+    }
+  }
+
+  const topmostIndex = selectedEntries[selectedEntries.length - 1].index;
+  const removedBeforeTopmost = selectedEntries.filter((entry) => entry.index < topmostIndex).length;
+  const insertIndex = topmostIndex - removedBeforeTopmost;
+
+  state.layers = state.layers.filter((layer) => !selectedSet.has(layer.id));
+  state.layers.splice(insertIndex, 0, mergedLayer);
+  setActiveLayer(mergedLayer.id);
+  showStatus(`선택 레이어 ${selectedEntries.length}개를 병합했습니다.`);
 }
 
 function drawCompositeNow() {
@@ -382,7 +512,7 @@ function drawCompositeNow() {
     if (layer.type === "raster") {
       viewCtx.drawImage(layer.canvas, layer.x, layer.y);
     } else if (layer.type === "text") {
-      drawTextLayer(layer);
+      drawTextLayer(layer, viewCtx);
     }
   }
   viewCtx.restore();
@@ -1043,6 +1173,8 @@ function resizeCanvas() {
     const baseLayer = createRasterLayer("배경 레이어");
     state.layers.push(baseLayer);
     state.activeLayerId = baseLayer.id;
+    state.layerSelection.selectedIds = new Set([baseLayer.id]);
+    state.layerSelection.anchorId = baseLayer.id;
     renderLayersList();
   } else {
     resizeRasterLayers();
@@ -1108,6 +1240,9 @@ function setToolUI() {
   fillModeButton.classList.toggle("active", state.shapeFill);
   if (deleteLayerButton) {
     deleteLayerButton.disabled = state.layers.length <= 1;
+  }
+  if (mergeLayersButton) {
+    mergeLayersButton.disabled = getSelectedLayerIds().length < 2;
   }
   updateEditorVisual();
   syncLayerTextPanel();
@@ -2132,6 +2267,9 @@ function initEvents() {
   saveButton.addEventListener("click", savePng);
   if (addLayerButton) {
     addLayerButton.addEventListener("click", addRasterLayer);
+  }
+  if (mergeLayersButton) {
+    mergeLayersButton.addEventListener("click", mergeSelectedLayers);
   }
   if (deleteLayerButton) {
     deleteLayerButton.addEventListener("click", deleteActiveLayer);
