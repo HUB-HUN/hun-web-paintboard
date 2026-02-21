@@ -385,6 +385,15 @@ function getLayerTypeLabel(layer) {
   return layer.type === "text" ? "텍스트" : "래스터";
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function getEditingContext() {
   const layer = getActiveLayer();
   if (layer && layer.type === "raster") {
@@ -431,7 +440,7 @@ function createRasterLayer(name = null) {
 function createTextLayer(text, x, y) {
   return {
     id: state.nextLayerId++,
-    name: `텍스트 ${state.nextLayerId - 1}`,
+    name: text,
     type: "text",
     visible: true,
     x,
@@ -460,9 +469,10 @@ function renderLayersList() {
     const isDragOver = state.layerReorder.dragging && state.layerReorder.overId === layer.id && !isDragSource;
     row.className = `layer-item${isActive ? " active" : ""}${isSelected ? " selected" : ""}${isDragSource ? " drag-source" : ""}${isDragOver ? " drag-over" : ""}`;
     row.dataset.layerId = String(layer.id);
+    const safeLayerName = escapeHtml(layer.name);
     row.innerHTML = `
       <span class="layer-meta">
-        <span class="layer-name">${layer.name}</span>
+        <span class="layer-name">${safeLayerName}</span>
         <span class="layer-type">${getLayerTypeLabel(layer)}</span>
       </span>
       <span>${layer.visible ? "◉" : "○"}</span>
@@ -519,7 +529,9 @@ function applyLayerTextFromPanel(forceHistory = false) {
     state.panelText.historyPushed = true;
   }
   layer.text = nextText;
+  layer.name = nextText;
   renderComposite();
+  renderLayersList();
 }
 
 function syncTextControlsFromLayer(layer) {
@@ -1148,6 +1160,7 @@ function closeTextEditor(commit) {
   const existing = editingLayerId ? getLayerById(editingLayerId) : null;
   if (existing && existing.type === "text") {
     existing.text = text;
+    existing.name = text;
     existing.x = x;
     existing.y = y;
     existing.color = state.color;
@@ -2060,6 +2073,7 @@ function undo() {
     layer.x = snapshot.x;
     layer.y = snapshot.y;
     layer.text = snapshot.text;
+    layer.name = snapshot.text;
     layer.color = snapshot.color;
     layer.fontFamily = snapshot.fontFamily;
     layer.fontWeight = snapshot.fontWeight;
