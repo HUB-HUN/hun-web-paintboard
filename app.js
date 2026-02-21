@@ -24,7 +24,6 @@ const layersPanel = document.querySelector(".layers-panel");
 const layersPanelHeader = document.querySelector(".layers-panel-header");
 const layerTextControls = document.getElementById("layerTextControls");
 const layerTextInput = document.getElementById("layerTextInput");
-const applyLayerTextButton = document.getElementById("applyLayerTextButton");
 
 const toolButtons = Array.from(document.querySelectorAll(".tool-button"));
 const swatchButtons = Array.from(document.querySelectorAll(".swatch"));
@@ -339,7 +338,8 @@ function renderLayersList() {
 function syncLayerTextPanel() {
   if (!layerTextControls || !layerTextInput) return;
   const layer = getActiveLayer();
-  const isTextLayer = Boolean(layer && layer.type === "text");
+  const selectedLayerCount = getSelectedLayerIds().length;
+  const isTextLayer = Boolean(layer && layer.type === "text" && selectedLayerCount === 1);
   layerTextControls.hidden = !isTextLayer;
 
   if (!isTextLayer) {
@@ -2311,14 +2311,6 @@ function initEvents() {
     layerTextInput.addEventListener("blur", () => {
       state.panelText.historyPushed = false;
       syncLayerTextPanel();
-    });
-  }
-  if (applyLayerTextButton) {
-    applyLayerTextButton.addEventListener("click", () => {
-      applyLayerTextFromPanel(true);
-      if (layerTextInput) {
-        layerTextInput.focus();
-      }
     });
   }
 

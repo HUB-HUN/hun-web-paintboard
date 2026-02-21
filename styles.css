@@ -306,17 +306,6 @@ input {
   background: #fff;
 }
 
-.layer-text-controls button {
-  align-self: flex-end;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  min-height: 30px;
-  padding: 5px 10px;
-  background: #fff;
-  cursor: pointer;
-  font-size: 12px;
-}
-
 .text-editor {
   position: absolute;
   z-index: 20;
