@@ -1876,6 +1876,33 @@ function handlePasteEvent(event) {
   }
 }
 
+function selectAllOnActiveLayer() {
+  if (state.text.editing) {
+    closeTextEditor(true);
+  }
+  const layer = getActiveLayer();
+  if (!layer) return;
+
+  setTool("select");
+  if (layer.type !== "raster" || !layer.canvas) {
+    showStatus("현재 레이어는 영역 선택 대신 이동 모드로 전환했습니다.");
+    return;
+  }
+
+  if (state.selection.active) {
+    commitSelectionToCanvas(true);
+  }
+  const rect = {
+    x: 0,
+    y: 0,
+    w: layer.canvas.width,
+    h: layer.canvas.height,
+  };
+  if (rect.w < 1 || rect.h < 1) return;
+  pushHistory();
+  beginSelectionFromRect(layer, rect);
+}
+
 function handleShortcuts(event) {
   const isMacLike = navigator.platform.toLowerCase().includes("mac");
   const meta = isMacLike ? event.metaKey : event.ctrlKey;
@@ -1911,6 +1938,9 @@ function handleShortcuts(event) {
   if (key === "c") {
     event.preventDefault();
     copyCanvasToClipboard();
+  } else if (key === "a") {
+    event.preventDefault();
+    selectAllOnActiveLayer();
   } else if (key === "z") {
     event.preventDefault();
     undo();
