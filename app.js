@@ -1,6 +1,6 @@
 const canvas = document.getElementById("paintCanvas");
 const canvasWrap = document.querySelector(".canvas-wrap");
-const ctx = canvas.getContext("2d", { willReadFrequently: true });
+const viewCtx = canvas.getContext("2d", { willReadFrequently: true });
 
 const colorPicker = document.getElementById("colorPicker");
 const sizeSlider = document.getElementById("sizeSlider");
@@ -16,6 +16,9 @@ const textFontWeight = document.getElementById("textFontWeight");
 const textWeightValue = document.getElementById("textWeightValue");
 const textSizeSlider = document.getElementById("textSizeSlider");
 const textSizeValue = document.getElementById("textSizeValue");
+const addLayerButton = document.getElementById("addLayerButton");
+const deleteLayerButton = document.getElementById("deleteLayerButton");
+const layersList = document.getElementById("layersList");
 
 const toolButtons = Array.from(document.querySelectorAll(".tool-button"));
 const swatchButtons = Array.from(document.querySelectorAll(".swatch"));
@@ -33,8 +36,19 @@ const state = {
   color: colorPicker.value,
   size: Number(sizeSlider.value),
   shapeFill: false,
+  layers: [],
+  nextLayerId: 1,
+  activeLayerId: null,
+  layerDrag: {
+    active: false,
+    pointerId: null,
+    startPointerX: 0,
+    startPointerY: 0,
+    startLayerX: 0,
+    startLayerY: 0,
+  },
   history: [],
-  maxHistory: 30,
+  maxHistory: 20,
   lastX: 0,
   lastY: 0,
   lastShiftKey: false,
@@ -80,6 +94,7 @@ const state = {
     size: Number(textSizeSlider.value),
     editing: false,
     editorEl: null,
+    editingLayerId: null,
     x: 0,
     y: 0,
   },
@@ -97,6 +112,213 @@ const state = {
     offsetY: 0,
   },
 };
+
+function getLayerById(layerId) {
+  return state.layers.find((layer) => layer.id === layerId) || null;
+}
+
+function getActiveLayer() {
+  return getLayerById(state.activeLayerId);
+}
+
+function getLayerTypeLabel(layer) {
+  if (!layer) return "";
+  return layer.type === "text" ? "텍스트" : "래스터";
+}
+
+function getEditingContext() {
+  const layer = getActiveLayer();
+  if (layer && layer.type === "raster") {
+    return layer.ctx;
+  }
+  return viewCtx;
+}
+
+const ctx = new Proxy(
+  {},
+  {
+    get(_target, property) {
+      const context = getEditingContext();
+      const value = context[property];
+      return typeof value === "function" ? value.bind(context) : value;
+    },
+    set(_target, property, value) {
+      const context = getEditingContext();
+      context[property] = value;
+      return true;
+    },
+  },
+);
+
+function createRasterLayer(name = null) {
+  const layerCanvas = document.createElement("canvas");
+  layerCanvas.width = state.world.width || Math.max(1, canvas.clientWidth || 1);
+  layerCanvas.height = state.world.height || Math.max(1, canvas.clientHeight || 1);
+  const layerCtx = layerCanvas.getContext("2d", { willReadFrequently: true });
+  layerCtx.clearRect(0, 0, layerCanvas.width, layerCanvas.height);
+  const layer = {
+    id: state.nextLayerId++,
+    name: name || `레이어 ${state.nextLayerId - 1}`,
+    type: "raster",
+    visible: true,
+    x: 0,
+    y: 0,
+    canvas: layerCanvas,
+    ctx: layerCtx,
+  };
+  return layer;
+}
+
+function createTextLayer(text, x, y) {
+  return {
+    id: state.nextLayerId++,
+    name: `텍스트 ${state.nextLayerId - 1}`,
+    type: "text",
+    visible: true,
+    x,
+    y,
+    text,
+    color: state.color,
+    fontFamily: state.text.family,
+    fontWeight: state.text.weight,
+    fontSize: state.text.size,
+  };
+}
+
+function renderLayersList() {
+  if (!layersList) return;
+  layersList.innerHTML = "";
+
+  const sortedLayers = [...state.layers].reverse();
+  sortedLayers.forEach((layer) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `layer-item${layer.id === state.activeLayerId ? " active" : ""}`;
+    row.dataset.layerId = String(layer.id);
+    row.innerHTML = `
+      <span class="layer-meta">
+        <span class="layer-name">${layer.name}</span>
+        <span class="layer-type">${getLayerTypeLabel(layer)}</span>
+      </span>
+      <span>${layer.visible ? "◉" : "○"}</span>
+    `;
+    row.addEventListener("click", () => {
+      setActiveLayer(layer.id);
+    });
+    layersList.appendChild(row);
+  });
+}
+
+function syncTextControlsFromLayer(layer) {
+  if (!layer || layer.type !== "text") return;
+  state.text.family = layer.fontFamily;
+  state.text.weight = layer.fontWeight;
+  state.text.size = layer.fontSize;
+  state.color = layer.color;
+  textFontFamily.value = layer.fontFamily;
+  textFontWeight.value = String(layer.fontWeight);
+  textSizeSlider.value = String(layer.fontSize);
+  colorPicker.value = layer.color;
+}
+
+function setActiveLayer(layerId) {
+  const layer = getLayerById(layerId);
+  if (!layer) return;
+  state.activeLayerId = layerId;
+  syncTextControlsFromLayer(layer);
+  renderLayersList();
+  setToolUI();
+  renderComposite();
+}
+
+function addRasterLayer() {
+  const layer = createRasterLayer();
+  state.layers.push(layer);
+  setActiveLayer(layer.id);
+  showStatus("새 래스터 레이어를 추가했습니다.");
+  renderComposite();
+}
+
+function deleteActiveLayer() {
+  const layer = getActiveLayer();
+  if (!layer) return;
+  if (state.text.editing && state.text.editingLayerId === layer.id) {
+    closeTextEditor(false);
+  }
+  if (state.layers.length <= 1) {
+    showStatus("최소 1개 레이어는 유지해야 합니다.", true);
+    return;
+  }
+  const index = state.layers.findIndex((candidate) => candidate.id === layer.id);
+  if (index < 0) return;
+  state.layers.splice(index, 1);
+  const nextLayer = state.layers[Math.max(0, index - 1)] || state.layers[0];
+  state.activeLayerId = nextLayer ? nextLayer.id : null;
+  if (nextLayer) {
+    syncTextControlsFromLayer(nextLayer);
+  }
+  setToolUI();
+  renderLayersList();
+  renderComposite();
+}
+
+function ensureActiveRasterLayer() {
+  const activeLayer = getActiveLayer();
+  if (activeLayer && activeLayer.type === "raster") {
+    return activeLayer;
+  }
+  const layer = createRasterLayer();
+  state.layers.push(layer);
+  setActiveLayer(layer.id);
+  showStatus("텍스트 레이어에서는 그릴 수 없어 새 래스터 레이어를 만들었습니다.");
+  return layer;
+}
+
+function resizeRasterLayers() {
+  state.layers.forEach((layer) => {
+    if (layer.type !== "raster" || !layer.canvas) return;
+    if (layer.canvas.width === state.world.width && layer.canvas.height === state.world.height) return;
+    const prev = document.createElement("canvas");
+    prev.width = layer.canvas.width;
+    prev.height = layer.canvas.height;
+    prev.getContext("2d").drawImage(layer.canvas, 0, 0);
+
+    layer.canvas.width = state.world.width;
+    layer.canvas.height = state.world.height;
+    layer.ctx = layer.canvas.getContext("2d", { willReadFrequently: true });
+    layer.ctx.drawImage(prev, 0, 0);
+  });
+}
+
+function drawTextLayer(layer) {
+  if (!layer || layer.type !== "text" || !layer.visible || !layer.text) return;
+  viewCtx.save();
+  viewCtx.globalCompositeOperation = "source-over";
+  viewCtx.fillStyle = layer.color;
+  viewCtx.font = `${layer.fontWeight} ${layer.fontSize}px ${getTextFamilyCssName(layer.fontFamily)}`;
+  viewCtx.textBaseline = "top";
+  const drawY = layer.y - layer.fontSize / 2;
+  viewCtx.fillText(layer.text, layer.x, drawY);
+  viewCtx.restore();
+}
+
+function renderComposite() {
+  viewCtx.save();
+  viewCtx.setTransform(1, 0, 0, 1, 0, 0);
+  viewCtx.clearRect(0, 0, canvas.width, canvas.height);
+  viewCtx.restore();
+  viewCtx.fillStyle = "#ffffff";
+  viewCtx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+
+  for (const layer of state.layers) {
+    if (!layer.visible) continue;
+    if (layer.type === "raster") {
+      viewCtx.drawImage(layer.canvas, layer.x, layer.y);
+    } else if (layer.type === "text") {
+      drawTextLayer(layer);
+    }
+  }
+}
 
 function showStatus(message, isError = false) {
   if (!toastContainer) return;
@@ -355,8 +577,7 @@ function handleKeyUp(event) {
 }
 
 function getCanvasScale() {
-  const cssWidth = canvas.clientWidth || 1;
-  return canvas.width / cssWidth;
+  return 1;
 }
 
 function canvasToPngBlob(targetCanvas) {
@@ -424,25 +645,36 @@ function closeTextEditor(commit) {
   const text = editor.value.trim();
   const x = state.text.x;
   const y = state.text.y;
+  const editingLayerId = state.text.editingLayerId;
 
   editor.remove();
   state.text.editorEl = null;
   state.text.editing = false;
+  state.text.editingLayerId = null;
 
   if (!commit || text.length === 0) return;
 
   pushHistory();
-  ctx.save();
-  ctx.globalCompositeOperation = "source-over";
-  ctx.fillStyle = state.color;
-  ctx.font = getTextFontCss();
-  ctx.textBaseline = "top";
-  const drawY = clampNumber(y - state.text.size / 2, 0, canvas.clientHeight - state.text.size);
-  ctx.fillText(text, x, drawY);
-  ctx.restore();
+  const existing = editingLayerId ? getLayerById(editingLayerId) : null;
+  if (existing && existing.type === "text") {
+    existing.text = text;
+    existing.x = x;
+    existing.y = y;
+    existing.color = state.color;
+    existing.fontFamily = state.text.family;
+    existing.fontWeight = state.text.weight;
+    existing.fontSize = state.text.size;
+    setActiveLayer(existing.id);
+  } else {
+    const textLayer = createTextLayer(text, x, y);
+    state.layers.push(textLayer);
+    setActiveLayer(textLayer.id);
+  }
+  renderLayersList();
+  renderComposite();
 }
 
-function openTextEditor(x, y) {
+function openTextEditor(x, y, editingLayer = null) {
   if (state.selection.active) {
     commitSelectionToCanvas(true);
   }
@@ -454,6 +686,21 @@ function openTextEditor(x, y) {
   input.type = "text";
   input.className = "text-editor";
   input.placeholder = "텍스트 입력 후 Enter";
+
+  if (editingLayer && editingLayer.type === "text") {
+    state.text.family = editingLayer.fontFamily;
+    state.text.weight = editingLayer.fontWeight;
+    state.text.size = editingLayer.fontSize;
+    state.color = editingLayer.color;
+    textFontFamily.value = editingLayer.fontFamily;
+    textFontWeight.value = String(editingLayer.fontWeight);
+    textSizeSlider.value = String(editingLayer.fontSize);
+    colorPicker.value = editingLayer.color;
+    input.value = editingLayer.text || "";
+    state.text.editingLayerId = editingLayer.id;
+  } else {
+    state.text.editingLayerId = null;
+  }
 
   state.text.x = clampNumber(x, 0, canvas.clientWidth - 1);
   state.text.y = clampNumber(y, 0, canvas.clientHeight - 1);
@@ -481,6 +728,12 @@ function openTextEditor(x, y) {
   });
 }
 
+function editActiveTextLayer() {
+  const layer = getActiveLayer();
+  if (!layer || layer.type !== "text") return;
+  openTextEditor(layer.x, layer.y, layer);
+}
+
 function drawSelectionOutline(x, y, w, h) {
   ctx.save();
   ctx.strokeStyle = "#2563eb";
@@ -495,6 +748,7 @@ function renderFloatingSelection() {
   ctx.putImageData(state.selection.baseSnapshot, 0, 0);
   ctx.drawImage(state.selection.layer, state.selection.x, state.selection.y, state.selection.w, state.selection.h);
   drawSelectionOutline(state.selection.x, state.selection.y, state.selection.w, state.selection.h);
+  renderComposite();
 }
 
 function commitSelectionToCanvas(clearAfter = true) {
@@ -507,6 +761,7 @@ function commitSelectionToCanvas(clearAfter = true) {
   if (clearAfter) {
     clearSelectionState();
   }
+  renderComposite();
 }
 
 function resizeCanvas() {
@@ -524,12 +779,6 @@ function resizeCanvas() {
   const previousCenterY = (viewportHeight / 2 - state.view.offsetY) / prevScale;
 
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const old = document.createElement("canvas");
-  old.width = canvas.width;
-  old.height = canvas.height;
-  const oldCtx = old.getContext("2d");
-  oldCtx.drawImage(canvas, 0, 0);
-
   if (!state.world.initialized) {
     state.world.width = Math.max(Math.round(viewportWidth * state.world.scaleFactor), state.world.minWidth);
     state.world.height = Math.max(Math.round(viewportHeight * state.world.scaleFactor), state.world.minHeight);
@@ -544,14 +793,17 @@ function resizeCanvas() {
 
   canvas.width = Math.floor(state.world.width * dpr);
   canvas.height = Math.floor(state.world.height * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  viewCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  viewCtx.lineCap = "round";
+  viewCtx.lineJoin = "round";
 
-  if (old.width > 0 && old.height > 0) {
-    ctx.drawImage(old, 0, 0, old.width / dpr, old.height / dpr);
+  if (state.layers.length === 0) {
+    const baseLayer = createRasterLayer("배경 레이어");
+    state.layers.push(baseLayer);
+    state.activeLayerId = baseLayer.id;
+    renderLayersList();
+  } else {
+    resizeRasterLayers();
   }
 
   const fitScale = Math.max(viewportWidth / canvas.clientWidth, viewportHeight / canvas.clientHeight);
@@ -569,14 +821,15 @@ function resizeCanvas() {
   }
 
   applyViewTransform();
+  renderComposite();
 }
 
 function setTool(tool) {
   if (state.tool === "text" && tool !== "text" && state.text.editing) {
     closeTextEditor(true);
   }
-  if (state.tool !== "select" && tool === "select") {
-    // keep current canvas as-is
+  if (state.tool === "select" && tool !== "select") {
+    state.layerDrag.active = false;
   }
   if (state.tool === "select" && tool !== "select" && state.selection.active) {
     commitSelectionToCanvas(true);
@@ -602,6 +855,9 @@ function setToolUI() {
   });
   strokeModeButton.classList.toggle("active", !state.shapeFill);
   fillModeButton.classList.toggle("active", state.shapeFill);
+  if (deleteLayerButton) {
+    deleteLayerButton.disabled = state.layers.length <= 1;
+  }
   updateEditorVisual();
   updateCanvasCursor();
 }
@@ -610,8 +866,31 @@ function pushHistory() {
   if (state.selection.active) {
     commitSelectionToCanvas(true);
   }
+  const layer = getActiveLayer();
+  if (!layer) return;
   try {
-    const snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let snapshot;
+    if (layer.type === "raster") {
+      snapshot = {
+        kind: "raster",
+        layerId: layer.id,
+        x: layer.x,
+        y: layer.y,
+        imageData: layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height),
+      };
+    } else {
+      snapshot = {
+        kind: "text",
+        layerId: layer.id,
+        x: layer.x,
+        y: layer.y,
+        text: layer.text,
+        color: layer.color,
+        fontFamily: layer.fontFamily,
+        fontWeight: layer.fontWeight,
+        fontSize: layer.fontSize,
+      };
+    }
     state.history.push(snapshot);
     if (state.history.length > state.maxHistory) {
       state.history.shift();
@@ -630,6 +909,14 @@ function getPoint(event) {
   return {
     x: clampNumber(rawX, 0, canvas.clientWidth),
     y: clampNumber(rawY, 0, canvas.clientHeight),
+  };
+}
+
+function toLayerLocal(point, layer = getActiveLayer()) {
+  if (!layer) return { x: point.x, y: point.y };
+  return {
+    x: point.x - (layer.x || 0),
+    y: point.y - (layer.y || 0),
   };
 }
 
@@ -805,7 +1092,10 @@ function beginSelectionFromRect(rect) {
   state.selection.w = rect.w;
   state.selection.h = rect.h;
   state.selection.layer = layer;
-  state.selection.baseSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const active = getActiveLayer();
+  const snapshotWidth = active && active.type === "raster" ? active.canvas.width : canvas.clientWidth;
+  const snapshotHeight = active && active.type === "raster" ? active.canvas.height : canvas.clientHeight;
+  state.selection.baseSnapshot = ctx.getImageData(0, 0, snapshotWidth, snapshotHeight);
   state.selection.offsetX = 0;
   state.selection.offsetY = 0;
 
@@ -835,12 +1125,39 @@ function beginDraw(event) {
   if (event.pointerType === "mouse" && event.button !== 0) return;
   event.preventDefault();
   keepPointInteractive(event);
-  const p = getPoint(event);
+  const worldPoint = getPoint(event);
+  const activeLayer = getActiveLayer();
 
-  if (state.tool === "text") {
-    openTextEditor(p.x, p.y);
+  if (state.tool === "select") {
+    if (!activeLayer) return;
+    if (event.pointerType === "mouse" && event.detail >= 2 && activeLayer.type === "text") {
+      editActiveTextLayer();
+      return;
+    }
+    pushHistory();
+    state.drawing = true;
+    state.pointerId = event.pointerId;
+    state.layerDrag.active = true;
+    state.layerDrag.pointerId = event.pointerId;
+    state.layerDrag.startPointerX = worldPoint.x;
+    state.layerDrag.startPointerY = worldPoint.y;
+    state.layerDrag.startLayerX = activeLayer.x || 0;
+    state.layerDrag.startLayerY = activeLayer.y || 0;
+    canvasWrap.setPointerCapture(event.pointerId);
     return;
   }
+
+  if (state.tool === "text") {
+    if (activeLayer && activeLayer.type === "text" && event.pointerType === "mouse" && event.detail >= 2) {
+      editActiveTextLayer();
+      return;
+    }
+    openTextEditor(worldPoint.x, worldPoint.y);
+    return;
+  }
+
+  const rasterLayer = ensureActiveRasterLayer();
+  const p = toLayerLocal(worldPoint, rasterLayer);
 
   state.drawing = true;
   state.pointerId = event.pointerId;
@@ -851,24 +1168,6 @@ function beginDraw(event) {
   state.lastShiftKey = event.shiftKey;
   canvasWrap.setPointerCapture(event.pointerId);
 
-  if (state.tool === "select") {
-    if (state.selection.active && pointInRect(p.x, p.y, state.selection)) {
-      state.selection.dragging = true;
-      state.selection.offsetX = p.x - state.selection.x;
-      state.selection.offsetY = p.y - state.selection.y;
-      return;
-    }
-
-    if (state.selection.active) {
-      commitSelectionToCanvas(true);
-    }
-
-    pushHistory();
-    state.selection.creating = true;
-    state.previewSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    return;
-  }
-
   if (state.selection.active) {
     commitSelectionToCanvas(true);
   }
@@ -876,7 +1175,7 @@ function beginDraw(event) {
   pushHistory();
 
   if (SHAPE_TOOLS.has(state.tool)) {
-    state.previewSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    state.previewSnapshot = ctx.getImageData(0, 0, rasterLayer.canvas.width, rasterLayer.canvas.height);
     return;
   }
 
@@ -885,6 +1184,7 @@ function beginDraw(event) {
   ctx.moveTo(p.x, p.y);
   ctx.lineTo(p.x + 0.001, p.y + 0.001);
   ctx.stroke();
+  renderComposite();
 }
 
 function draw(event) {
@@ -908,31 +1208,23 @@ function draw(event) {
   if (!state.drawing || event.pointerId !== state.pointerId) return;
   event.preventDefault();
   keepPointInteractive(event);
-  const p = getPoint(event);
+  const worldPoint = getPoint(event);
+
+  if (state.tool === "select" && state.layerDrag.active) {
+    const layer = getActiveLayer();
+    if (!layer) return;
+    layer.x = state.layerDrag.startLayerX + (worldPoint.x - state.layerDrag.startPointerX);
+    layer.y = state.layerDrag.startLayerY + (worldPoint.y - state.layerDrag.startPointerY);
+    renderComposite();
+    return;
+  }
+
+  const layer = getActiveLayer();
+  if (!layer || layer.type !== "raster") return;
+  const p = toLayerLocal(worldPoint, layer);
   const prevX = state.lastX;
   const prevY = state.lastY;
   state.lastShiftKey = event.shiftKey;
-
-  if (state.tool === "select") {
-    if (state.selection.creating) {
-      if (!state.previewSnapshot) return;
-      ctx.putImageData(state.previewSnapshot, 0, 0);
-      const rect = normalizeRect(state.startX, state.startY, p.x, p.y);
-      drawSelectionOutline(rect.x, rect.y, rect.w, rect.h);
-      state.lastX = p.x;
-      state.lastY = p.y;
-      return;
-    }
-
-    if (state.selection.dragging) {
-      state.selection.x = p.x - state.selection.offsetX;
-      state.selection.y = p.y - state.selection.offsetY;
-      renderFloatingSelection();
-    }
-    state.lastX = p.x;
-    state.lastY = p.y;
-    return;
-  }
 
   if (SHAPE_TOOLS.has(state.tool)) {
     if (!state.previewSnapshot) return;
@@ -941,6 +1233,7 @@ function draw(event) {
     drawShape(state.tool, state.startX, state.startY, constrained.x, constrained.y);
     state.lastX = p.x;
     state.lastY = p.y;
+    renderComposite();
     return;
   }
 
@@ -951,6 +1244,7 @@ function draw(event) {
   ctx.stroke();
   state.lastX = p.x;
   state.lastY = p.y;
+  renderComposite();
 }
 
 function endDraw(event) {
@@ -975,17 +1269,10 @@ function endDraw(event) {
   if (!state.drawing) return;
   if (event && state.pointerId !== null && event.pointerId !== state.pointerId) return;
 
-  if (state.tool === "select") {
-    if (state.selection.creating && state.previewSnapshot) {
-      ctx.putImageData(state.previewSnapshot, 0, 0);
-      const rect = normalizeRect(state.startX, state.startY, state.lastX, state.lastY);
-      if (rect.w >= 3 && rect.h >= 3) {
-        beginSelectionFromRect(rect);
-      }
-    } else if (state.selection.dragging) {
-      state.selection.dragging = false;
-      renderFloatingSelection();
-    }
+  if (state.tool === "select" && state.layerDrag.active) {
+    state.layerDrag.active = false;
+    state.layerDrag.pointerId = null;
+    renderComposite();
   } else if (SHAPE_TOOLS.has(state.tool) && state.previewSnapshot) {
     const constrained = constrainPoint(
       state.tool,
@@ -997,6 +1284,7 @@ function endDraw(event) {
     );
     ctx.putImageData(state.previewSnapshot, 0, 0);
     drawShape(state.tool, state.startX, state.startY, constrained.x, constrained.y);
+    renderComposite();
   }
 
   state.drawing = false;
@@ -1016,17 +1304,33 @@ function undo() {
   }
   const snapshot = state.history.pop();
   if (!snapshot) return;
-  ctx.putImageData(snapshot, 0, 0);
+  const layer = getLayerById(snapshot.layerId);
+  if (!layer) return;
+
+  if (snapshot.kind === "raster" && layer.type === "raster" && snapshot.imageData) {
+    layer.ctx.putImageData(snapshot.imageData, 0, 0);
+    layer.x = snapshot.x || 0;
+    layer.y = snapshot.y || 0;
+  } else if (snapshot.kind === "text" && layer.type === "text") {
+    layer.x = snapshot.x;
+    layer.y = snapshot.y;
+    layer.text = snapshot.text;
+    layer.color = snapshot.color;
+    layer.fontFamily = snapshot.fontFamily;
+    layer.fontWeight = snapshot.fontWeight;
+    layer.fontSize = snapshot.fontSize;
+  }
+  renderComposite();
 }
 
 function clearCanvas() {
   if (state.text.editing) {
     closeTextEditor(true);
   }
+  const layer = ensureActiveRasterLayer();
   pushHistory();
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+  renderComposite();
 }
 
 function savePng() {
@@ -1036,6 +1340,7 @@ function savePng() {
   if (state.selection.active) {
     renderFloatingSelection();
   }
+  renderComposite();
   const link = document.createElement("a");
   link.download = `paint-${Date.now()}.png`;
   link.href = canvas.toDataURL("image/png");
@@ -1055,6 +1360,7 @@ async function copyCanvasToClipboard() {
   }
 
   try {
+    renderComposite();
     let sourceCanvas = canvas;
 
     if (state.selection.active && state.selection.layer) {
@@ -1126,32 +1432,15 @@ async function pasteImageBlob(blob) {
     const image = await loadBlobToImage(blob);
     pushHistory();
 
-    const scale = getCanvasScale();
-    const drawWidth = image.width / scale;
-    const drawHeight = image.height / scale;
+    const drawWidth = image.width;
+    const drawHeight = image.height;
     const x = (canvas.clientWidth - drawWidth) / 2;
     const y = (canvas.clientHeight - drawHeight) / 2;
 
-    const layer = document.createElement("canvas");
-    layer.width = image.width;
-    layer.height = image.height;
-    layer.getContext("2d").drawImage(image, 0, 0);
-
-    state.selection.active = true;
-    state.selection.creating = false;
-    state.selection.dragging = false;
-    state.selection.x = x;
-    state.selection.y = y;
-    state.selection.w = drawWidth;
-    state.selection.h = drawHeight;
-    state.selection.layer = layer;
-    state.selection.baseSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    state.selection.offsetX = 0;
-    state.selection.offsetY = 0;
-
-    setTool("select");
-    renderFloatingSelection();
-    showStatus("붙여넣기 완료. 선택 상태로 바로 이동할 수 있습니다.");
+    const rasterLayer = ensureActiveRasterLayer();
+    rasterLayer.ctx.drawImage(image, x - (rasterLayer.x || 0), y - (rasterLayer.y || 0), drawWidth, drawHeight);
+    renderComposite();
+    showStatus("이미지를 활성 레이어에 붙여넣었습니다.");
   } catch {
     showStatus("이미지 붙여넣기에 실패했습니다.", true);
   }
@@ -1181,6 +1470,15 @@ function handlePasteEvent(event) {
 function handleShortcuts(event) {
   const isMacLike = navigator.platform.toLowerCase().includes("mac");
   const meta = isMacLike ? event.metaKey : event.ctrlKey;
+
+  if (event.key === "Enter" && state.tool === "select") {
+    const layer = getActiveLayer();
+    if (layer && layer.type === "text" && !state.text.editing && !getTargetIsTypingElement(event.target)) {
+      event.preventDefault();
+      editActiveTextLayer();
+      return;
+    }
+  }
 
   if (event.key === "Escape" && state.selection.active) {
     commitSelectionToCanvas(true);
@@ -1231,6 +1529,11 @@ function initEvents() {
 
   colorPicker.addEventListener("change", () => {
     state.color = colorPicker.value;
+    const activeLayer = getActiveLayer();
+    if (activeLayer && activeLayer.type === "text" && !state.text.editing) {
+      activeLayer.color = state.color;
+      renderComposite();
+    }
     if (state.tool === "eraser") {
       setTool("brush");
     }
@@ -1245,18 +1548,33 @@ function initEvents() {
 
   textFontFamily.addEventListener("change", () => {
     state.text.family = textFontFamily.value;
+    const activeLayer = getActiveLayer();
+    if (activeLayer && activeLayer.type === "text" && !state.text.editing) {
+      activeLayer.fontFamily = state.text.family;
+      renderComposite();
+    }
     updateEditorVisual();
     setToolUI();
   });
 
   textFontWeight.addEventListener("input", () => {
     state.text.weight = Number(textFontWeight.value);
+    const activeLayer = getActiveLayer();
+    if (activeLayer && activeLayer.type === "text" && !state.text.editing) {
+      activeLayer.fontWeight = state.text.weight;
+      renderComposite();
+    }
     updateEditorVisual();
     setToolUI();
   });
 
   textSizeSlider.addEventListener("input", () => {
     state.text.size = Number(textSizeSlider.value);
+    const activeLayer = getActiveLayer();
+    if (activeLayer && activeLayer.type === "text" && !state.text.editing) {
+      activeLayer.fontSize = state.text.size;
+      renderComposite();
+    }
     updateEditorVisual();
     setToolUI();
   });
@@ -1273,6 +1591,11 @@ function initEvents() {
       if (!nextColor) return;
       state.color = nextColor;
       colorPicker.value = nextColor;
+      const activeLayer = getActiveLayer();
+      if (activeLayer && activeLayer.type === "text" && !state.text.editing) {
+        activeLayer.color = state.color;
+        renderComposite();
+      }
       if (state.tool === "eraser") {
         setTool("brush");
       } else {
@@ -1292,6 +1615,26 @@ function initEvents() {
   undoButton.addEventListener("click", undo);
   clearButton.addEventListener("click", clearCanvas);
   saveButton.addEventListener("click", savePng);
+  if (addLayerButton) {
+    addLayerButton.addEventListener("click", addRasterLayer);
+  }
+  if (deleteLayerButton) {
+    deleteLayerButton.addEventListener("click", deleteActiveLayer);
+  }
+  if (layersList) {
+    layersList.addEventListener("dblclick", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const target = event.target.closest(".layer-item");
+      if (!target) return;
+      const layerId = Number(target.dataset.layerId);
+      const layer = getLayerById(layerId);
+      if (!layer) return;
+      setActiveLayer(layer.id);
+      if (layer.type === "text") {
+        editActiveTextLayer();
+      }
+    });
+  }
 
   window.addEventListener("resize", resizeCanvas);
   window.addEventListener("keydown", handleKeyDown);

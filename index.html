@@ -110,6 +110,16 @@
 
       <section class="canvas-wrap">
         <canvas id="paintCanvas" aria-label="그림판 캔버스"></canvas>
+        <aside class="layers-panel" aria-label="레이어 패널">
+          <div class="layers-panel-header">
+            <strong>레이어</strong>
+            <div class="layers-actions">
+              <button id="addLayerButton" type="button">+ 레이어</button>
+              <button id="deleteLayerButton" type="button">삭제</button>
+            </div>
+          </div>
+          <div id="layersList" class="layers-list"></div>
+        </aside>
       </section>
     </main>
     <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
