@@ -267,6 +267,15 @@ input {
   background: #eff6ff;
 }
 
+.layer-item.drag-source {
+  opacity: 0.62;
+}
+
+.layer-item.drag-over {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35) inset;
+}
+
 .layer-item .layer-meta {
   display: inline-flex;
   flex-direction: column;

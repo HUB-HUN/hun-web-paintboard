@@ -49,6 +49,12 @@ const state = {
     selectedIds: new Set(),
     anchorId: null,
   },
+  layerReorder: {
+    dragging: false,
+    draggedIds: [],
+    overId: null,
+    suppressClickUntil: 0,
+  },
   layerDrag: {
     active: false,
     pointerId: null,
@@ -206,6 +212,10 @@ function applyLayerSelection(selectedIds, activeLayerId, anchorId = activeLayerI
 }
 
 function handleLayerRowClick(layerId, event) {
+  if (Date.now() < state.layerReorder.suppressClickUntil) {
+    event.preventDefault();
+    return;
+  }
   const layer = getLayerById(layerId);
   if (!layer) return;
 
@@ -242,6 +252,132 @@ function handleLayerRowClick(layerId, event) {
   }
 
   applyLayerSelection([layerId], layerId, layerId);
+}
+
+function clearLayerDragVisuals() {
+  if (!layersList) return;
+  layersList.querySelectorAll(".layer-item.drag-over").forEach((row) => row.classList.remove("drag-over"));
+  layersList.querySelectorAll(".layer-item.drag-source").forEach((row) => row.classList.remove("drag-source"));
+}
+
+function setLayerDragOverVisual(layerId) {
+  if (!layersList) return;
+  clearLayerDragVisuals();
+  const draggedSet = new Set(state.layerReorder.draggedIds);
+  for (const draggedId of draggedSet) {
+    const sourceRow = layersList.querySelector(`.layer-item[data-layer-id="${draggedId}"]`);
+    if (sourceRow) {
+      sourceRow.classList.add("drag-source");
+    }
+  }
+  const overRow = layersList.querySelector(`.layer-item[data-layer-id="${layerId}"]`);
+  if (overRow && !draggedSet.has(layerId)) {
+    overRow.classList.add("drag-over");
+  }
+}
+
+function buildSwappedDisplayOrder(displayIds, draggedIds, targetId) {
+  const draggedSet = new Set(draggedIds);
+  if (draggedSet.size === 0 || draggedSet.has(targetId)) return null;
+  if (!displayIds.includes(targetId)) return null;
+
+  const orderedDragged = displayIds.filter((id) => draggedSet.has(id));
+  if (orderedDragged.length === 0) return null;
+
+  const originalTargetIndex = displayIds.indexOf(targetId);
+  const originalFirstDraggedIndex = displayIds.indexOf(orderedDragged[0]);
+  const removedSet = new Set([...orderedDragged, targetId]);
+  const removedIndices = displayIds
+    .map((id, index) => (removedSet.has(id) ? index : -1))
+    .filter((index) => index >= 0);
+  const countRemovedBefore = (index) => removedIndices.filter((removedIndex) => removedIndex < index).length;
+
+  const base = displayIds.filter((id) => !removedSet.has(id));
+  const insertDraggedAt = originalTargetIndex - countRemovedBefore(originalTargetIndex);
+  const withDragged = [...base];
+  withDragged.splice(insertDraggedAt, 0, ...orderedDragged);
+
+  let insertTargetAt = originalFirstDraggedIndex - countRemovedBefore(originalFirstDraggedIndex);
+  if (insertTargetAt >= insertDraggedAt) {
+    insertTargetAt += orderedDragged.length;
+  }
+  withDragged.splice(insertTargetAt, 0, targetId);
+  return withDragged;
+}
+
+function swapLayerOrderByDrop(targetId) {
+  const draggedIds = state.layerReorder.draggedIds.filter((id) => getLayerById(id));
+  if (draggedIds.length === 0) return false;
+  if (draggedIds.includes(targetId)) return false;
+
+  const displayIds = getLayerDisplayOrderIds();
+  const swappedDisplayIds = buildSwappedDisplayOrder(displayIds, draggedIds, targetId);
+  if (!swappedDisplayIds || swappedDisplayIds.length !== displayIds.length) return false;
+
+  const layerMap = new Map(state.layers.map((layer) => [layer.id, layer]));
+  const nextLayerOrder = swappedDisplayIds
+    .slice()
+    .reverse()
+    .map((layerId) => layerMap.get(layerId))
+    .filter(Boolean);
+  if (nextLayerOrder.length !== state.layers.length) return false;
+
+  state.layers = nextLayerOrder;
+  const nextActiveId =
+    state.activeLayerId && draggedIds.includes(state.activeLayerId)
+      ? state.activeLayerId
+      : draggedIds[0];
+  applyLayerSelection(draggedIds, nextActiveId, state.layerSelection.anchorId || nextActiveId);
+  return true;
+}
+
+function handleLayerRowDragStart(layerId, event) {
+  const selectedIds = new Set(getSelectedLayerIds());
+  const dragIds = selectedIds.has(layerId) ? [...selectedIds] : [layerId];
+  state.layerReorder.dragging = true;
+  state.layerReorder.draggedIds = dragIds;
+  state.layerReorder.overId = null;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", String(layerId));
+  }
+  setLayerDragOverVisual(null);
+}
+
+function handleLayerRowDragOver(layerId, event) {
+  if (!state.layerReorder.dragging) return;
+  if (state.layerReorder.draggedIds.includes(layerId)) {
+    state.layerReorder.overId = null;
+    setLayerDragOverVisual(null);
+    return;
+  }
+  event.preventDefault();
+  state.layerReorder.overId = layerId;
+  setLayerDragOverVisual(layerId);
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "move";
+  }
+}
+
+function handleLayerRowDrop(layerId, event) {
+  if (!state.layerReorder.dragging) return;
+  event.preventDefault();
+  const changed = swapLayerOrderByDrop(layerId);
+  state.layerReorder.suppressClickUntil = Date.now() + 160;
+  state.layerReorder.dragging = false;
+  state.layerReorder.draggedIds = [];
+  state.layerReorder.overId = null;
+  clearLayerDragVisuals();
+  if (changed) {
+    showStatus("레이어 순서를 교환했습니다.");
+  }
+}
+
+function handleLayerRowDragEnd() {
+  state.layerReorder.dragging = false;
+  state.layerReorder.draggedIds = [];
+  state.layerReorder.overId = null;
+  clearLayerDragVisuals();
 }
 
 function getLayerTypeLabel(layer) {
@@ -317,9 +453,12 @@ function renderLayersList() {
   sortedLayers.forEach((layer) => {
     const row = document.createElement("button");
     row.type = "button";
+    row.draggable = true;
     const isActive = layer.id === state.activeLayerId;
     const isSelected = selectedIds.has(layer.id);
-    row.className = `layer-item${isActive ? " active" : ""}${isSelected ? " selected" : ""}`;
+    const isDragSource = state.layerReorder.dragging && state.layerReorder.draggedIds.includes(layer.id);
+    const isDragOver = state.layerReorder.dragging && state.layerReorder.overId === layer.id && !isDragSource;
+    row.className = `layer-item${isActive ? " active" : ""}${isSelected ? " selected" : ""}${isDragSource ? " drag-source" : ""}${isDragOver ? " drag-over" : ""}`;
     row.dataset.layerId = String(layer.id);
     row.innerHTML = `
       <span class="layer-meta">
@@ -330,6 +469,18 @@ function renderLayersList() {
     `;
     row.addEventListener("click", (event) => {
       handleLayerRowClick(layer.id, event);
+    });
+    row.addEventListener("dragstart", (event) => {
+      handleLayerRowDragStart(layer.id, event);
+    });
+    row.addEventListener("dragover", (event) => {
+      handleLayerRowDragOver(layer.id, event);
+    });
+    row.addEventListener("drop", (event) => {
+      handleLayerRowDrop(layer.id, event);
+    });
+    row.addEventListener("dragend", () => {
+      handleLayerRowDragEnd();
     });
     layersList.appendChild(row);
   });
